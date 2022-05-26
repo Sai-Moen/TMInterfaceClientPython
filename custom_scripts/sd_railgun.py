@@ -16,7 +16,7 @@ class MainClient(Client):
     def on_registered(self, iface: TMInterface):
         print(f'Registered to {iface.server_name}')
         iface.log('[Railgun] Use the sd command to set a time range: sd time_from time_to')
-        iface.log('[Railgun] Make sure that the steer input at the start time should be in the direction you would like to sd.')
+        iface.log('[Railgun] Make sure that the steer input at the start time is in the direction you would like to sd.')
         iface.register_custom_command('sd')
         iface.execute_command('set controller none')
 
@@ -25,14 +25,18 @@ class MainClient(Client):
             if len(args) == 2:
                 time_from = cmdlist.parse_time(args[0])
                 time_to = cmdlist.parse_time(args[1])
+
                 if time_to < 0 or time_from < 0:
                     iface.log('[Railgun] Timerange must be in positive hundreths', 'error')
+
                 elif time_to <= time_from:
                     iface.log('[Railgun] Start time must be lower than the end time.', 'error')
+
                 else:
                     self.input_time = time_from
                     self.max_time = time_to + self.SEEK + 10
                     iface.log('[Railgun] Changed settings', 'success')
+
             else:
                 iface.log('[Railgun] Usage: sd time_from time_to', 'warning')
 
@@ -50,16 +54,16 @@ class MainClient(Client):
 
         # Fill original replay steering inputs
         self.inputs = [
-            [val.time-100010, val.analog_value]
+            (val.time-100010, val.analog_value)
             for val in iface.get_event_buffer().find(event_name=ANALOG_STEER_NAME)
         ]
         for tick in range(self.max_time // 10):
             prev_steer = self.inputs[tick - 1][1] * (tick != 0)
             try:
                 if self.inputs[tick][0] != tick * 10:
-                    self.inputs.insert(tick, [None, prev_steer])
+                    self.inputs.insert(tick, (None, prev_steer))
             except IndexError:
-                self.inputs.append([None, prev_steer])
+                self.inputs.append((None, prev_steer))
         self.inputs: list[int] = [inp[1] for inp in self.inputs]
 
         # Determine direction
@@ -99,12 +103,12 @@ class MainClient(Client):
 
             else: # Interpolated down to a change of 1, pick best steer
                 s1: int = self.velocity[0][1]
-                self.inputs[self.input_time // 10] = s1
+                self.inputs[_time // 10] = s1
                 if self.last_steer != s1:
                     print(f'{self.input_time} steer {s1}')
                     self.final_inputs.append((self.input_time, s1))
                     self.last_steer = s1
-                
+
                 # Reset vars, go to next tick
                 self.velocity = []
                 self.input_time += 10
