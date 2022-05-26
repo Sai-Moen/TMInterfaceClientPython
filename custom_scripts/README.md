@@ -2,8 +2,8 @@
 
 Instead of trying to optimize friction and angles like sd_perfect, it tries to find the angle that will give it the most speed in the near future.
 Technically this is just a very short-term speed script with multiple iterations.
-An sd is never defined in the code. However, after just 10 ticks (100ms), there is already a good measurable difference in speed gain from speedslides depending on steering angle.
-The algorithm will be able to hold the 'perfect' angle down with a precision of a couple hundred steering units, worst case a couple thousand if there is a lot of suspension action going on
+An sd is never defined in the code. However, after just 10 ticks (100ms), there is already a good measurable difference in speed gain from speedslides depending on steering angle. (Though a little bit of buffer is used for consistency)
+The algorithm will be able to hold the 'perfect' angle down with a precision of a couple hundred steering units, worst case a couple thousand if there is a lot of suspension action going on.
 That is assuming you're on a level surface, although it should keep working when going up a ramp.
 
 My personal recommendation would be to get a decent sd going, then use this script to get it near-perfect, and then bruteforce it with the built-in velocity bruteforcer or longer term speed scripts just in case.
