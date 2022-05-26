@@ -1,4 +1,4 @@
-sd_railgun by SaiMoen:
+# sd_railgun by SaiMoen:
 
 Instead of trying to optimize friction and angles like sd_perfect,
 it tries to find the angle that will give it the most speed in the near future.
