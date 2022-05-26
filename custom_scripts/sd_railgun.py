@@ -11,14 +11,14 @@ class MainClient(Client):
     def __init__(self) -> None:
         super().__init__()
         self.max_time = -1
-        self.SEEK = 160
+        self.SEEK = 120
 
     def on_registered(self, iface: TMInterface):
         print(f'Registered to {iface.server_name}')
         iface.log('[Railgun] Use the sd command to set a time range: sd time_from time_to')
-        iface.log('[Railgun] Make sure of the following: Bruteforce should be disabled,')
-        iface.log('[Railgun] The steer input at the start time should be in the direction you would like to sd.')
+        iface.log('[Railgun] Make sure that the steer input at the start time should be in the direction you would like to sd.')
         iface.register_custom_command('sd')
+        iface.execute_command('set controller none')
 
     def on_custom_command(self, iface: TMInterface, time_from: int, time_to: int, command: str, args: list):
         if command == 'sd':
