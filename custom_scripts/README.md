@@ -19,8 +19,8 @@ If I start rambling about countersteering... that really means no steering in th
 
 ###### Common problems:
 1. Using keyboard presses inside the timerange will most likely cause the script to malfunction in some way or another. Converting to pad/analog manually or using the TMInterface discord bot is highly recommended.
-2. If countersteering takes place at something like a brake tap, you could try to raise the seeking distance, but it's already pretty optimized for most situations so probably try some different/later timeranges instead.
-3. Most obstacles and walls cannot be avoided unless you are barely far enough away in order for the script to react in time by countersteering to a very low steer value. You will see this in the console when it starts steering around wildly.
+2. If countersteering takes place at something like an s4d, you could try to raise the seeking distance, but it's already pretty optimized for most situations so probably try some different/later timeranges instead. The first tick should be almost full steering and then gradually decrease to the perfect angle, that's how you know it 'caught' the sd correctly. For jumps/drops you would like to go from 0 steering in the air to holding the correct angle as fast as possible.
+3. Most obstacles and walls cannot be avoided unless you are barely far enough away in order for the script to react in time by steering to a very low steer value. You will see this in the console when it starts steering around wildly.
 4. This effect can also be seen when gearing on dirt or grass, but you might end up losing speed anyway as, for a split second, it's faster to full steer and avoid the gear. The gear comes through at some point though, and then it will quickly stop steering until there is no more penalty for doing so. It is therefore recommended to bruteforce gear changes on these surfaces as well.
 
 ###### Explanation:
