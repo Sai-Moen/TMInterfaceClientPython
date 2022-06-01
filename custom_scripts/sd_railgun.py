@@ -3,83 +3,67 @@
 import numpy as np
 from sys import argv
 from tminterface.client import Client, run_client
-from tminterface.commandlist import CommandList as cmdlist
 from tminterface.constants import ANALOG_STEER_NAME
 from tminterface.interface import TMInterface
 
 class MainClient(Client):
     def __init__(self) -> None:
         super().__init__()
-        self.max_time = -1
+        self.time_from = -1
+        self.time_to = -1
         self.SEEK = 120
 
     def on_registered(self, iface: TMInterface):
         print(f'Registered to {iface.server_name}')
-        iface.log('[Railgun] Use the sd command to set a time range: sd time_from time_to')
-        iface.log('[Railgun] Make sure that the steer input at the start time is in the direction you would like to sd.')
+        iface.log('[Railgun] Use the sd command to set a time range: time1-time2 sd')
         iface.register_custom_command('sd')
         iface.execute_command('set controller none')
 
     def on_custom_command(self, iface: TMInterface, time_from: int, time_to: int, command: str, args: list):
         if command == 'sd':
-            if len(args) == 2:
-                time_from = cmdlist.parse_time(args[0])
-                time_to = cmdlist.parse_time(args[1])
-
-                if time_to < 0 or time_from < 0:
-                    iface.log('[Railgun] Timerange must be in positive hundreths', 'error')
-
-                elif time_to <= time_from:
-                    iface.log('[Railgun] Start time must be lower than the end time.', 'error')
-
-                else:
-                    self.input_time = time_from
-                    self.max_time = time_to + self.SEEK + 10
-                    iface.log('[Railgun] Changed settings', 'success')
-
+            if len(args) > 0:
+                iface.log('[Railgun] Usage: time1-time2 sd', 'warning')
             else:
-                iface.log('[Railgun] Usage: sd time_from time_to', 'warning')
+                self.time_from = time_from
+                self.time_to = time_to
+                iface.log('[Railgun] Settings changed succesfully!', 'success')
 
     def on_simulation_begin(self, iface: TMInterface):
-        if self.max_time == -1:
-            iface.log('[Railgun] Usage: sd time_from time_to', 'warning')
+        if self.time_to == -1 or self.time_from == -1:
+            iface.log('[Railgun] Usage: time1-time2 sd', 'error')
             iface.log('[Railgun] (closing to prevent exception): You forgot to set a time range', 'error')
             iface.close()
+        
+        # Re-init every simulation start
         iface.remove_state_validation()
 
-        # Re-init every simulation start
+        self.input_time = self.time_from
+        self.MAX_TIME = self.time_to + self.SEEK
         self.velocity: list[tuple] = []
         self.final_inputs: list[tuple] = []
-        self.last_steer: int = None
 
         # Fill original replay steering inputs
         self.inputs = [
             (val.time-100010, val.analog_value)
             for val in iface.get_event_buffer().find(event_name=ANALOG_STEER_NAME)
         ]
-        for tick in range(self.max_time // 10):
-            prev_steer = self.inputs[tick - 1][1] * (tick != 0)
+        for tick in range(self.MAX_TIME // 10 + 1):
+            prev_steer = (None, self.inputs[tick - 1][1] * (tick != 0)) # Don't care about time so None
             try:
                 if self.inputs[tick][0] != tick * 10:
-                    self.inputs.insert(tick, (None, prev_steer))
+                    self.inputs.insert(tick, prev_steer)
             except IndexError:
-                self.inputs.append((None, prev_steer))
+                self.inputs.append(prev_steer)
         self.inputs: list[int] = [inp[1] for inp in self.inputs]
 
-        # Determine direction
-        self.direction = int(self.inputs[self.input_time // 10])
+        # Determine direction, set last_steer
+        self.last_steer = self.inputs[self.time_from // 10 - 1]
+        self.direction = int(sum(self.inputs[self.time_from // 10 : self.time_to // 10 + 1]))
         self.direction = (self.direction > 0) - (self.direction < 0)
 
     def on_simulation_step(self, iface: TMInterface, _time: int):
         # Earlier _time values are checked last and vice versa
-        if _time > self.max_time:
-            return
-
-        elif _time == self.max_time:
-            print('Saving steering inputs to sd_railgun.txt...')
-            with open('sd_railgun.txt', 'w') as f:
-                f.writelines([f'{t[0]} steer {t[1]}\n' for t in self.final_inputs])
-            print('Saved! Keep in mind that this is only the pad steering inputs found, and nothing else.')
+        if _time > self.MAX_TIME:
             return
 
         # After self.SEEK milliseconds, save the velocity and go back
@@ -96,7 +80,7 @@ class MainClient(Client):
             if v_len <= 32: # Get some starting points
                 self.steer: int = 2048 * (32 - v_len) * self.direction
 
-            elif 32 < v_len <= 43: # Start interpolating
+            elif v_len <= 43: # Start interpolating
                 s1: int = self.velocity[0][1]
                 s2: int = self.velocity[1][1]
                 self.steer: int = s1 + (2 ** (43 - v_len)) * ((s1 < s2) - (s1 > s2))
@@ -124,6 +108,12 @@ class MainClient(Client):
         if self.input_time <= _time < self.input_time + self.SEEK:
             iface.set_input_state(sim_clear_buffer=False, steer= -self.steer)
             # REMOVE "-" AFTER v1.1.2 DROPS, this is a temporary fix for an input flip bug
+
+    def on_simulation_end(self, iface: TMInterface, result: int):
+        print('[Railgun] Saving steering inputs to sd_railgun.txt...')
+        with open('sd_railgun.txt', 'w') as f:
+            f.writelines([f'{t[0]} steer {t[1]}\n' for t in self.final_inputs])
+        print('[Railgun] Saved! Keep in mind that this is only the pad steering inputs found, and nothing else.')
 
 if __name__ == '__main__':
     server_name = f'TMInterface{argv[1]}' if len(argv) > 1 else 'TMInterface0'
