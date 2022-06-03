@@ -7,7 +7,7 @@ from tminterface.constants import ANALOG_STEER_NAME
 from tminterface.interface import TMInterface
 
 class MainClient(Client):
-    def __init__(self) -> None:
+    def __init__(self):
         super().__init__()
         self.time_from = -1
         self.time_to = -1
@@ -38,7 +38,7 @@ class MainClient(Client):
         iface.remove_state_validation()
 
         self.input_time = self.time_from
-        self.MAX_TIME = self.time_to + self.SEEK
+        self.max_time = self.time_to + self.SEEK + 10
         self.velocity: list[tuple] = []
         self.final_inputs: list[tuple] = []
 
@@ -47,29 +47,31 @@ class MainClient(Client):
             (val.time-100010, val.analog_value)
             for val in iface.get_event_buffer().find(event_name=ANALOG_STEER_NAME)
         ]
-        for tick in range(self.MAX_TIME // 10 + 1):
+
+        for tick in range(self.max_time // 10):
             prev_steer = (None, self.inputs[tick - 1][1] * (tick != 0)) # Don't care about time so None
             try:
                 if self.inputs[tick][0] != tick * 10:
                     self.inputs.insert(tick, prev_steer)
             except IndexError:
                 self.inputs.append(prev_steer)
-        self.inputs: list[int] = [inp[1] for inp in self.inputs]
 
-        # Determine direction, set last_steer
+        self.inputs: list[int] = [inp[1] for inp in self.inputs]
         self.last_steer = self.inputs[self.time_from // 10 - 1]
-        self.direction = int(sum(self.inputs[self.time_from // 10 : self.time_to // 10 + 1]))
-        self.direction = (self.direction > 0) - (self.direction < 0)
+        self.direction = int(np.sign(
+            sum(self.inputs[self.time_from // 10 : self.time_to // 10 + 1])
+        ))
 
     def on_simulation_step(self, iface: TMInterface, _time: int):
         # Earlier _time values are checked last and vice versa
-        if _time > self.MAX_TIME:
+        if _time >= self.max_time:
             return
 
         # After self.SEEK milliseconds, save the velocity and go back
         elif _time == self.input_time + self.SEEK:
-            v = np.linalg.norm(iface.get_simulation_state().velocity)
-            self.velocity.append((v, self.steer))
+            self.velocity.append(
+                (np.linalg.norm(iface.get_simulation_state().velocity), self.steer)
+            )
             iface.rewind_to_state(self.step)
 
         # Steering value algorithm
@@ -89,8 +91,8 @@ class MainClient(Client):
                 s1: int = self.velocity[0][1]
                 self.inputs[_time // 10] = s1
                 if self.last_steer != s1:
-                    print(f'{self.input_time} steer {s1}')
-                    self.final_inputs.append((self.input_time, s1))
+                    print(f'{_time} steer {s1}')
+                    self.final_inputs.append((_time, s1))
                     self.last_steer = s1
 
                 # Reset vars, go to next tick
