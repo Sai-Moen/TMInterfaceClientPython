@@ -15,17 +15,17 @@ class MainClient(Client):
 
     def on_registered(self, iface: TMInterface):
         print(f'Registered to {iface.server_name}')
-        iface.log('[Railgun] Use the sd command to set a time range: time1-time2 sd')
-        iface.register_custom_command('sd')
         iface.execute_command('set controller none')
+        iface.register_custom_command('sd')
+        iface.log('[Railgun] Use the sd command to set a time range: time1-time2 sd')
 
     def on_custom_command(self, iface: TMInterface, time_from: int, time_to: int, command: str, args: list):
         if command == 'sd':
             if len(args) > 0:
                 iface.log('[Railgun] Usage: time1-time2 sd', 'warning')
             else:
-                self.time_from = time_from
-                self.time_to = time_to
+                self.time_from, self.f_idx = time_from, time_from // 10
+                self.time_to, self.t_idx = time_to, time_to // 10 + 1
                 iface.log('[Railgun] Settings changed succesfully!', 'success')
 
     def on_simulation_begin(self, iface: TMInterface):
@@ -33,23 +33,16 @@ class MainClient(Client):
             iface.log('[Railgun] Usage: time1-time2 sd', 'error')
             iface.log('[Railgun] (closing to prevent exception): You forgot to set a time range', 'error')
             iface.close()
-        
-        # Re-init every simulation start
         iface.remove_state_validation()
 
-        self.input_time = self.time_from
-        self.max_time = self.time_to + self.SEEK + 10
-        self.velocity: list[tuple] = []
-        self.final_inputs: list[tuple] = []
-
-        # Fill original replay steering inputs
+        # Fill steering inputs
         self.inputs = [
-            (val.time-100010, val.analog_value)
-            for val in iface.get_event_buffer().find(event_name=ANALOG_STEER_NAME)
+            (st.time-100010, st.analog_value)
+            for st in iface.get_event_buffer().find(event_name=ANALOG_STEER_NAME)
         ]
 
-        for tick in range(self.max_time // 10):
-            prev_steer = (None, self.inputs[tick - 1][1] * (tick != 0)) # Don't care about time so None
+        for tick in range(self.t_idx):
+            prev_steer = (None, self.inputs[tick - 1][1] * (tick != 0))
             try:
                 if self.inputs[tick][0] != tick * 10:
                     self.inputs.insert(tick, prev_steer)
@@ -57,14 +50,15 @@ class MainClient(Client):
                 self.inputs.append(prev_steer)
 
         self.inputs: list[int] = [inp[1] for inp in self.inputs]
-        self.last_steer = self.inputs[self.time_from // 10 - 1]
         self.direction = int(np.sign(
-            sum(self.inputs[self.time_from // 10 : self.time_to // 10 + 1])
+            sum(self.inputs[self.f_idx:self.t_idx])
         ))
+        # Re-init on every simulation start
+        self.input_time = self.time_from
+        self.velocity: list[tuple] = []
 
     def on_simulation_step(self, iface: TMInterface, _time: int):
-        # Earlier _time values are checked last and vice versa
-        if _time >= self.max_time:
+        if self.input_time > self.time_to:
             return
 
         # After self.SEEK milliseconds, save the velocity and go back
@@ -90,10 +84,7 @@ class MainClient(Client):
             else: # Interpolated down to a change of 1, pick best steer
                 s1: int = self.velocity[0][1]
                 self.inputs[_time // 10] = s1
-                if self.last_steer != s1:
-                    print(f'{_time} steer {s1}')
-                    self.final_inputs.append((_time, s1))
-                    self.last_steer = s1
+                print(f'{_time} steer {s1}')
 
                 # Reset vars, go to next tick
                 self.velocity = []
@@ -114,7 +105,13 @@ class MainClient(Client):
     def on_simulation_end(self, iface: TMInterface, result: int):
         print('[Railgun] Saving steering inputs to sd_railgun.txt...')
         with open('sd_railgun.txt', 'w') as f:
-            f.writelines([f'{t[0]} steer {t[1]}\n' for t in self.final_inputs])
+            f.writelines(
+                [
+                    f'{t[0] * 10} steer {t[1]}\n' for t in
+                    enumerate(self.inputs[self.f_idx:self.t_idx], self.f_idx)
+                    if t[1] != self.inputs[t[0] - 1]
+                ]
+            )
         print('[Railgun] Saved! Keep in mind that this is only the pad steering inputs found, and nothing else.')
 
 if __name__ == '__main__':
