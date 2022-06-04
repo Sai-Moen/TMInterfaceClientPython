@@ -6,7 +6,7 @@ I will try to say 'script' when referring to the scripts that interact with the 
 
 If I start rambling about countersteering... that really means no steering in this script.
 
-###### Quick setup:
+##### Quick setup:
 1. Run the script while TMInterface is open
 2. It should disable bruteforce automatically (with the command 'set controller none')
 3. Write down a timerange, followed by 'sd'; (100-1000 sd, or: 0.1-1.0 sd, for example)
@@ -17,16 +17,16 @@ If I start rambling about countersteering... that really means no steering in th
 8. If you happen to have any button presses in the timerange, be aware that they have been executed in the simulation, but not saved. One way to deal with this is to simply paste the inputs below the existing TAS script and then go from there, since they don't necessarily have to be in ascending order for TMInterface to load the TAS script.
 9. (Optional) Deregister the script and go over the inputs with a built-in or script bruteforcer to be sure that all of the map-specific quirks are ironed out. This will also sort your button presses again, if it finds an improvement at least.
 
-###### Common problems:
+##### Common problems:
 1. Using keyboard presses inside the timerange will most likely cause the script to malfunction in some way or another. Converting to pad/analog manually or using the TMInterface discord bot is highly recommended.
 2. If countersteering takes place at something like an s4d, you could try to raise the seeking distance, but it's already pretty optimized for most situations so probably try some different/later timeranges instead. The first tick it finds should be slighly understeered since then it will decrease to the best angle, whereas it can't always find the correct angle if it tries to increase the steering by itself. However, this happens mostly at 400-500 speed on road and even then it might be able to full steer to correct itself. Otherwise it doesn't really happen, but do pay attention to that.
 3. Most obstacles and walls cannot be avoided unless you are barely far enough away in order for the script to react in time by steering to a very low steer value. You will see this in the console when it starts steering around wildly.
 4. This effect can also be seen when gearing on dirt or grass, but you might end up losing speed anyway as, for a split second, it's faster to full steer and avoid the gear. The gear comes through at some point though, and then it will quickly stop steering until there is no more penalty for doing so. It is therefore recommended to bruteforce gear changes on these surfaces as well, in case it was faster to just let the gear go through normally.
 
-###### Explanation:
+##### Explanation:
 Instead of trying to optimize friction and angles like sd_perfect, it tries to find the angle that will give it the most speed in the near future.
 Technically this is just a very short-term speed script using a lot of rewinds to test things in a deterministic way instead of bruteforce.
-An sd is never defined in the code. However, after just 10 ticks (100ms), there is already a good measurable difference in speed gain from speedslides depending on steering angle. (Though 20ms of buffer is used for consistency for all surfaces/angles and so forth)
+An sd is never defined in the code. However, after just 10 ticks (100ms), there is already a good measurable difference in speed gain from speedslides depending on steering angle. But 12 ticks seems to be the fastest and most consistent delay.
 The algorithm will be able to hold the most 'perfect' angle down that can be achieved from the simulation state at input time. It does the following:
 
 Firstly, 33 steering values in the given direction are tested, with an interval of 2048. This covers the entire half of the steering range that we will be focusing on. (that is 0 up to and including 65536 in the set direction)
