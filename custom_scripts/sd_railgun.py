@@ -17,20 +17,23 @@ class MainClient(Client):
         print(f'Registered to {iface.server_name}')
         iface.execute_command('set controller none')
         iface.register_custom_command('sd')
-        iface.log('[Railgun] Use the sd command to set a time range: time1-time2 sd')
+        iface.log('[Railgun] Use the sd command to set a time range: time_from-time_to sd')
 
     def on_custom_command(self, iface: TMInterface, time_from: int, time_to: int, command: str, args: list):
         if command == 'sd':
             if len(args) > 0:
-                iface.log('[Railgun] Usage: time1-time2 sd', 'warning')
+                iface.log('[Railgun] Usage: time_from-time_to sd', 'warning')
             else:
                 self.time_from, self.f_idx = time_from, time_from // 10
                 self.time_to, self.t_idx = time_to, time_to // 10 + 1
-                iface.log('[Railgun] Settings changed succesfully!', 'success')
+                if self.time_to == -1 or self.time_from == -1:
+                    iface.log('[Railgun] Timerange not set, Usage: time_from-time_to sd', 'warning')
+                else:
+                    iface.log('[Railgun] Settings changed succesfully!', 'success')
 
     def on_simulation_begin(self, iface: TMInterface):
         if self.time_to == -1 or self.time_from == -1:
-            iface.log('[Railgun] Usage: time1-time2 sd', 'error')
+            iface.log('[Railgun] Usage: time_from-time_to sd', 'error')
             iface.log('[Railgun] (closing to prevent exception): You forgot to set a time range', 'error')
             iface.close()
         iface.remove_state_validation()
