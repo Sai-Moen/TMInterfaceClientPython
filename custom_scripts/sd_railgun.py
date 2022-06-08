@@ -9,9 +9,9 @@ from tminterface.interface import TMInterface
 class MainClient(Client):
     def __init__(self):
         super().__init__()
-        self.time_from = -1
-        self.time_to = -1
-        self.SEEK = 120
+        self.time_from: int = -1
+        self.time_to: int = -1
+        self.seek: int = 120
 
     def on_registered(self, iface: TMInterface):
         print(f'Registered to {iface.server_name}')
@@ -23,11 +23,13 @@ class MainClient(Client):
         if command == 'sd':
             if len(args) > 0:
                 iface.log('[Railgun] Usage: time_from-time_to sd', 'warning')
+
             else:
                 self.time_from, self.f_idx = time_from, time_from // 10
                 self.time_to, self.t_idx = time_to, time_to // 10 + 1
                 if self.time_to == -1 or self.time_from == -1:
                     iface.log('[Railgun] Timerange not set, Usage: time_from-time_to sd', 'warning')
+
                 else:
                     iface.log('[Railgun] Settings changed succesfully!', 'success')
 
@@ -58,64 +60,115 @@ class MainClient(Client):
         ))
         # Re-init on every simulation start
         self.input_time = self.time_from
-        self.velocity: list[tuple] = []
+        self.sHelper = steerPredictor(self.direction)
 
     def on_simulation_step(self, iface: TMInterface, _time: int):
+        # Later events are checked first
         if self.input_time > self.time_to:
             return
 
-        # After self.SEEK milliseconds, save the velocity and go back
-        elif _time == self.input_time + self.SEEK:
-            self.velocity.append(
-                (np.linalg.norm(iface.get_simulation_state().velocity), self.steer)
-            )
+        elif _time == self.input_time + self.seek:
+            self.sHelper.add((self.getHorizontalVelocity(iface), self.steer))
             iface.rewind_to_state(self.step)
 
-        # Steering value algorithm
         elif _time == self.input_time:
-            self.velocity.sort(reverse=True) # Descending velocity
-            v_len = len(self.velocity)
-
-            if v_len <= 32: # Get some starting points
-                self.steer: int = 2048 * (32 - v_len) * self.direction
-
-            elif v_len <= 43: # Start interpolating
-                s1: int = self.velocity[0][1]
-                s2: int = self.velocity[1][1]
-                self.steer: int = s1 + (2 ** (43 - v_len)) * ((s1 < s2) - (s1 > s2))
-
-            else: # Interpolated down to a change of 1, pick best steer
-                s1: int = self.velocity[0][1]
-                self.inputs[_time // 10] = s1
-                print(f'{_time} steer {s1}')
-
-                # Reset vars, go to next tick
-                self.velocity = []
+            self.steer: int = self.sHelper.iter()
+            if self.sHelper.i == self.sHelper.max_i:
+                self.inputs[_time // 10] = self.sHelper.s1
+                print(f'{_time} steer {self.sHelper.s1}')
+                # Reset
+                self.sHelper.__init__(self.direction)
                 self.input_time += 10
                 iface.rewind_to_state(self.step)
 
-        # Grab new savestate and apply steering value obtained from previous iteration
         elif _time == self.input_time - 10:
             self.step = iface.get_simulation_state()
+            self.seek = int(120 - (np.linalg.norm(self.step.velocity) >= 222.5) * 60)
             iface.set_input_state(sim_clear_buffer=False, steer= -self.inputs[_time // 10])
             # REMOVE "-" AFTER v1.1.2 DROPS, this is a temporary fix for an input flip bug
 
-        # Apply test steer values
-        if self.input_time <= _time < self.input_time + self.SEEK:
+        if self.input_time <= _time < self.input_time + self.seek:
             iface.set_input_state(sim_clear_buffer=False, steer= -self.steer)
             # REMOVE "-" AFTER v1.1.2 DROPS, this is a temporary fix for an input flip bug
 
+    @staticmethod
+    def getHorizontalVelocity(iface: TMInterface):
+        # Almost the same as normal, but no local y component
+        state = iface.get_simulation_state()
+
+        xx = state.rotation_matrix[0][0]
+        yx = state.rotation_matrix[1][0]
+        zx = state.rotation_matrix[2][0]
+
+        xz = state.rotation_matrix[0][2]
+        yz = state.rotation_matrix[1][2]
+        zz = state.rotation_matrix[2][2]
+
+        vx = state.velocity[0]
+        vy = state.velocity[1]
+        vz = state.velocity[2]
+
+        return np.linalg.norm(
+            (
+                vx * xx + vy * yx + vz * zx,
+                vx * xz + vy * yz + vz * zz
+            )
+        )
+
+    def writeSteerToFile(self):
+        msg = 'success!'
+        try:
+            with open('sd_railgun.txt', 'w') as f:
+                f.writelines(
+                    [
+                        f'{t[0] * 10} steer {t[1]}\n' for t in
+                        enumerate(self.inputs[self.f_idx:self.t_idx], self.f_idx)
+                        if t[1] != self.inputs[t[0] - 1]
+                    ]
+                )
+        except:
+            msg = 'failed.'
+        finally:
+            print(f'[Railgun] Input write {msg}')
+
     def on_simulation_end(self, iface: TMInterface, result: int):
         print('[Railgun] Saving steering inputs to sd_railgun.txt...')
-        with open('sd_railgun.txt', 'w') as f:
-            f.writelines(
-                [
-                    f'{t[0] * 10} steer {t[1]}\n' for t in
-                    enumerate(self.inputs[self.f_idx:self.t_idx], self.f_idx)
-                    if t[1] != self.inputs[t[0] - 1]
-                ]
-            )
+        self.writeSteerToFile()
         print('[Railgun] Saved! Keep in mind that this is only the pad steering inputs found, and nothing else.')
+
+    def on_deregistered(self, iface: TMInterface):
+        print('[Railgun] Attempting to back up most recent inputs to sd_railgun.txt...')
+        self.writeSteerToFile()
+
+class steerPredictor:
+    def __init__(self, direction: int):
+        self.direction: int = direction
+        self.i: int = 0
+        self.max_i: int = 85
+        self.v_pairs: list[tuple] = [(0, 0)] * self.max_i
+
+    def add(self, pair: tuple):
+        self.v_pairs[self.i] = pair
+        self.i += 1
+
+    def iter(self):
+        self.v_pairs.sort(reverse=True) # descending velocity
+        self.s1: int = self.v_pairs[0][1] # best steer up to this point is s1
+        # 5 stages of taking a range of 17 values with an interval (4096, 512, 64, 8, 1) around s1
+        idx = self.i // 17 # iteration with self.i == 85 is just to sort and get the correct s1
+        interval = 2 ** (12 - idx * 3)
+        midpoint = (16, 25, 42, 59, 76, 84)[idx]
+        if self.i == idx * 17:
+            self.base = self.s1
+        # WAYTOODANK
+        steer: int = self.base + interval * (midpoint - self.i) * self.direction
+        steer: int = steer if abs(steer) <= 65536 else 65536 * self.direction
+        if steer not in [t[1] for t in self.v_pairs if t[0] != 0]:
+            return steer
+
+        else: # Skips iteration if we already checked that value
+            self.i += 1
+            return self.iter()
 
 if __name__ == '__main__':
     server_name = f'TMInterface{argv[1]}' if len(argv) > 1 else 'TMInterface0'
