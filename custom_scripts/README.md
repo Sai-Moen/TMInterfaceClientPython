@@ -10,11 +10,12 @@ At no point should you need to edit the code itself, if you find an error, just 
 1. Run the script while TMInterface is open
 2. It should disable bruteforce automatically (with the command 'set controller none')
 3. In the TMInterface console, write down a timerange, followed by 'sd'; (60100-61000 sd, or: 1:00.1-1:01.0 sd, for example)
-4. The direction it will try to speedslide will be based on the average steering value in that timerange (just so you know)
-5. Press validate on the replay in which you would like to improve your speedslide, within the given timerange.
-6. The script will take a while to go through all the ticks, you might find yourself waiting several seconds to do one in-game second.
-7. Afterwards, all of the recommended steering inputs will have been printed to console and also saved to a file named sd_railgun.txt in the same directory as the script. The inputs in the file do not have duplicates, and also you can ctrl-a ctrl-c them much easier. Anything other than steer commands is not saved because the event buffer is somehow empty when I try to access it, even during simulation...
-8. (Optional) Deregister the script and go over the inputs with a built-in or script bruteforcer to be sure that all of the map-specific quirks are ironed out. This will also sort your button presses again, if it finds an improvement at least.
+4. Make sure you're actually in a somewhat decent slide at the start time, otherwise it will just go straight for the most part.
+5. The direction it will try to speedslide will be based on the average steering value in that timerange. (just so you know)
+6. Press validate on the replay in which you would like to improve your speedslide, within the given timerange.
+7. The script will take a while to go through all the ticks, you might find yourself waiting several seconds to do one in-game second.
+8. Afterwards, all of the recommended steering inputs will have been printed to console and also saved to a file named sd_railgun.txt in the same directory as the script. The inputs in the file do not have duplicates, and also you can ctrl-a ctrl-c them much easier.
+9. (Optional) Deregister the script and go over the inputs with a built-in or script bruteforcer to be sure that all of the map-specific quirks are ironed out. This will also sort your button presses again, if it finds an improvement at least.
 
 ##### Common problems:
 1. Using keyboard presses inside the timerange will most likely cause the script to malfunction in some way or another. Not because that would be hard to implement, but because I don't care. Converting to pad/analog manually or using the TMInterface discord bot is highly recommended.
