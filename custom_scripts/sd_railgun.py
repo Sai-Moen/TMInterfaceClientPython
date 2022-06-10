@@ -57,10 +57,13 @@ class MainClient(Client):
             iface.rewind_to_state(self.step)
 
         elif _time == self.input_time:
+            if self.sHelper.i == 0:
+                self.seek = 120 if self.getHorizontalVelocity(iface) < 222.5 else 60
+
             self.steer: int = self.sHelper.iter()
             if self.sHelper.i == self.sHelper.max_i:
                 self.inputs[_time // 10] = self.sHelper.s1
-                print(f'{_time} steer {self.sHelper.s1}')
+                print(f'{_time} steer {self.sHelper.s1} -> {self.getHorizontalVelocity(iface) * 3.6} km/h')
 
                 self.sHelper.reset()
                 self.input_time += 10
@@ -68,7 +71,6 @@ class MainClient(Client):
 
         elif _time == self.input_time - 10:
             self.step = iface.get_simulation_state()
-            self.seek = int(120 - (np.linalg.norm(self.step.velocity) >= 222.5) * 60)
             iface.set_input_state(sim_clear_buffer=False, steer= -self.inputs[_time // 10])
             # REMOVE "-" AFTER v1.1.2 DROPS, this is a temporary fix for an input flip bug
 
@@ -159,12 +161,14 @@ class steerPredictor:
         self.s1: int = self.v_pairs[0][1]
         
         idx = self.i // 17
-        if self.i == idx * 17: self.base = self.s1
+        if self.i == idx * 17:
+            self.base = self.s1
         interval = 2 ** (12 - idx * 3)
         midpoint = (16, 25, 42, 59, 76, 84)[idx]
 
         steer: int = self.base + interval * (midpoint - self.i) * self.direction
-        if abs(steer) > 65536: steer = self.direction * 65536
+        if abs(steer) > 65536:
+            steer = self.direction * 65536
 
         if steer not in [t[1] for t in self.v_pairs if t != (0, 0)]:
             return steer
