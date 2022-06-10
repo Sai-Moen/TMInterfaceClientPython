@@ -28,11 +28,12 @@ An sd is never defined in the code. However, after just 10 ticks (100ms), there 
 The algorithm will be able to hold the most 'perfect' angle down that can be achieved from the simulation state at input time. It does the following:
 
 ###### New algorithm:
-The script starts out by taking 17 steering value points from 0 to 65536 (multiplied by the sd direction; -1 for left and 1 for right), and saves the vector norm of the local x and z velocity. The vector norm is the length of a vector (in this case the amount of velocity). Local z velocity is the forward velocity of the car, local x velocity is the sideways velocity. Unlike the old algorithm however, it just keeps taking points around the fastest point of that stage, rather than trying to interpolate using the second best point. As it turns out, using the second best point is not 100% reliable. This change of algorithm gives us a pretty big acceleration boost of 0.015 km/h per second of speeddrift on average.
+The script starts out by taking 17 steering value points from 0 to 65536 (multiplied by the sd direction; -1 for left and 1 for right), and saves the vector norm of the local x and z velocity. The vector norm is the length of a vector (in this case the amount of velocity). Local z velocity is the forward velocity of the car, local x velocity is the sideways velocity. Unlike the old algorithm however, it just keeps taking points around the fastest point of that stage, rather than trying to interpolate using the second best point. As it turns out, using the second best point is not 100% reliable. This change of algorithm gives us a pretty big acceleration boost of 0.014 km/h per second of speeddrift on average.
 
 The stages are pretty simple:
 After our initial 17 starting points with an interval of 4096, divide the interval by 8 and measure 8 points around either side of the best point from the previous stage.
 After going from 4096 -> 512 -> 64 -> 8 -> 1, we can be fairly certain that we have approximated the best steering value to perfection, basically.
+The only thing that could be better is that we have to hold this angle for a certain amount of time before we can narrow it down this much without just getting a random value, but maybe some calculus could be used to correct this (? idk lol).
 
 ###### Old algorithm (No longer in use in newer versions of the python script):
 Firstly, 33 steering values in the given direction are tested, with an interval of 2048. This covers the entire half of the steering range that we will be focusing on. (that is 0 up to and including 65536 in the set direction)
