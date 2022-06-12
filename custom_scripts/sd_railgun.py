@@ -11,13 +11,15 @@ class MainClient(Client):
         super().__init__()
         self.time_from: int = -1
         self.time_to: int = -1
-        self.seek: int = 120
+        self.mode: str = 'main'
 
     def on_registered(self, iface: TMInterface):
         print(f'Registered to {iface.server_name}')
         iface.execute_command('set controller none')
         iface.register_custom_command('sd')
         iface.log('[Railgun] Use the sd command to set a time range: time_from-time_to sd')
+        iface.register_custom_command('sdmode')
+        iface.log('[Railgun] Use the sdmode command to switch between modes; main or road')
 
     def on_custom_command(self, iface: TMInterface, time_from: int, time_to: int, command: str, args: list):
         if command == 'sd':
@@ -31,7 +33,18 @@ class MainClient(Client):
                     iface.log('[Railgun] Timerange not set, Usage: time_from-time_to sd', 'warning')
 
                 else:
-                    iface.log('[Railgun] Settings changed succesfully!', 'success')
+                    iface.log('[Railgun] Timerange changed successfully!', 'success')
+
+        elif command == 'sdmode':
+            modes = ('main', 'road') #, 'dirt', 'grass')
+            if len(args) == 1:
+                for m in modes:
+                    if args[0] == m:
+                        self.mode = m
+                        iface.log('[Railgun] Mode changed successfully!', 'success')
+                        return
+            iface.log('[Railgun] Usage: sdmode <mode>', 'warning')
+            iface.log('[Railgun] Modes: main, road', 'warning')
 
     def on_simulation_begin(self, iface: TMInterface):
         if self.time_to == -1 or self.time_from == -1:
@@ -40,12 +53,36 @@ class MainClient(Client):
             iface.close()
         iface.remove_state_validation()
 
+        if self.mode == 'main':
+            eval_descending = True
+            self.seek = 120
+            self.eval = self.getVelocity
+
+        elif self.mode == 'road':
+            eval_descending = False
+            self.seek = 50
+            self.eval = self.getQuality
+            self.offset = self.roadOffset
+
+        elif self.mode == 'dirt':
+            eval_descending = False
+            self.seek = 50
+            self.eval = self.getQuality
+            self.offset = self.dirtOffset
+
+        elif self.mode == 'grass':
+            eval_descending = False
+            self.seek = 50
+            self.eval = self.getQuality
+            self.offset = self.grassOffset
+
         self.input_time = self.time_from
         self.inputs: list[int] = self.fillInputs(iface)
         self.sHelper = steerPredictor(
             int(np.sign(sum(
                 self.inputs[self.f_idx:self.t_idx]
-            )))
+            ))),
+            eval_descending
         )
 
     def on_simulation_step(self, iface: TMInterface, _time: int):
@@ -53,17 +90,14 @@ class MainClient(Client):
             return
 
         elif _time == self.input_time + self.seek:
-            self.sHelper + (self.getHorizontalVelocity(iface), self.steer)
+            self.sHelper + (self.eval(iface), self.steer)
             iface.rewind_to_state(self.step)
 
         elif _time == self.input_time:
-            if self.sHelper.i == 0:
-                self.seek = 120 if self.getHorizontalVelocity(iface) < 222.5 else 60
-
             self.steer: int = self.sHelper.iter()
             if self.sHelper.i == self.sHelper.max_i:
                 self.inputs[_time // 10] = self.sHelper.s1
-                print(f'{_time} steer {self.sHelper.s1} -> {self.getHorizontalVelocity(iface) * 3.6} km/h')
+                print(f'{_time} steer {self.sHelper.s1} -> {self.getVelocity(iface) * 3.6} km/h')
 
                 self.sHelper.reset()
                 self.input_time += 10
@@ -103,8 +137,7 @@ class MainClient(Client):
 
         return [inp[1] for inp in inputs]
 
-    @staticmethod
-    def getHorizontalVelocity(iface: TMInterface):
+    def getQuality(self, iface: TMInterface):
         state = iface.get_simulation_state()
 
         xx = state.rotation_matrix[0][0]
@@ -119,12 +152,27 @@ class MainClient(Client):
         vy = state.velocity[1]
         vz = state.velocity[2]
 
-        return np.linalg.norm(
-            (
-                vx * xx + vy * yx + vz * zx,
-                vx * xz + vy * yz + vz * zz
-            )
-        )
+        v_sideways = vx * xx + vy * yx + vz * zx
+        v_forwards = vx * xz + vy * yz + vz * zz
+        h_speed = np.linalg.norm((v_sideways, v_forwards)) * 3.6
+
+        return abs(v_sideways - self.offset(h_speed))
+
+    @staticmethod
+    def roadOffset(h_speed: np.floating):
+        return 5.5 + (h_speed < 401) * 0.5 + (401 <= h_speed < 501) * (501 - h_speed) * 0.005
+
+    @staticmethod
+    def dirtOffset(h_speed: np.floating):
+        pass
+
+    @staticmethod
+    def grassOffset(h_speed: np.floating):
+        pass
+
+    @staticmethod
+    def getVelocity(iface: TMInterface):
+        return np.linalg.norm(iface.get_simulation_state().velocity)
 
     def writeSteerToFile(self):
         msg = 'success!'
@@ -143,22 +191,24 @@ class MainClient(Client):
             print(f'[Railgun] Input write {msg}')
 
 class steerPredictor:
-    def __init__(self, direction: int):
+    def __init__(self, direction: int, eval_descending: bool):
         self.direction: int = direction
+        self.eval_descending: bool = eval_descending
         self.i: int = 0
         self.max_i: int = 85
-        self.v_pairs: list[tuple] = [(0, 0)] * self.max_i
+        self.pairs: list[tuple] = [(6, 0)] * self.max_i
 
     def reset(self):
-        self.__init__(self.direction)
+        self.i: int = 0
+        self.pairs: list[tuple] = [(6, 0)] * self.max_i
 
     def __add__(self, pair: tuple):
-        self.v_pairs[self.i] = pair
+        self.pairs[self.i] = pair
         self.i += 1
 
     def iter(self):
-        self.v_pairs.sort(reverse=True)
-        self.s1: int = self.v_pairs[0][1]
+        self.pairs.sort(reverse=self.eval_descending)
+        self.s1: int = self.pairs[0][1]
         
         idx = self.i // 17
         if self.i == idx * 17:
@@ -170,7 +220,7 @@ class steerPredictor:
         if abs(steer) > 65536:
             steer = self.direction * 65536
 
-        if steer not in [t[1] for t in self.v_pairs if t != (0, 0)]:
+        if steer not in [t[1] for t in self.pairs if t != (6, 0)]:
             return steer
 
         else:
