@@ -56,41 +56,39 @@ class MainClient(Client):
         if self.mode == 'main':
             eval_descending = True
             self.seek = 120
-            self.eval = self.getVelocity
+            self.evaluation = self.getVelocity
 
         elif self.mode == 'road':
             eval_descending = False
             self.seek = 50
-            self.eval = self.getQuality
+            self.evaluation = self.getQuality
             self.offset = self.roadOffset
 
         elif self.mode == 'dirt':
             eval_descending = False
             self.seek = 50
-            self.eval = self.getQuality
+            self.evaluation = self.getQuality
             self.offset = self.dirtOffset
 
         elif self.mode == 'grass':
             eval_descending = False
             self.seek = 50
-            self.eval = self.getQuality
+            self.evaluation = self.getQuality
             self.offset = self.grassOffset
 
         self.input_time = self.time_from
         self.inputs: list[int] = self.fillInputs(iface)
-        self.sHelper = steerPredictor(
-            int(np.sign(sum(
-                self.inputs[self.f_idx:self.t_idx]
-            ))),
-            eval_descending
-        )
+        self.direction = int(np.sign(sum(
+            self.inputs[self.f_idx:self.t_idx]
+        )))
+        self.sHelper = steerPredictor(self.direction, eval_descending)
 
     def on_simulation_step(self, iface: TMInterface, _time: int):
         if self.input_time > self.time_to:
             return
 
         elif _time == self.input_time + self.seek:
-            self.sHelper + (self.eval(iface), self.steer)
+            self.sHelper + (self.evaluation(iface), self.steer)
             iface.rewind_to_state(self.step)
 
         elif _time == self.input_time:
@@ -152,11 +150,11 @@ class MainClient(Client):
         vy = state.velocity[1]
         vz = state.velocity[2]
 
-        v_sideways = abs(vx * xx + vy * yx + vz * zx)
+        v_sideways = vx * xx + vy * yx + vz * zx
         v_forwards = vx * xz + vy * yz + vz * zz
         h_speed = np.linalg.norm((v_sideways, v_forwards)) * 3.6
 
-        return abs(v_sideways - self.offset(h_speed))
+        return abs(v_sideways * self.direction - self.offset(h_speed))
 
     @staticmethod
     def roadOffset(h_speed: np.floating):
@@ -196,11 +194,11 @@ class steerPredictor:
         self.eval_descending: bool = eval_descending
         self.i: int = 0
         self.max_i: int = 85
-        self.pairs: list[tuple] = [(6, 0)] * self.max_i
+        self.pairs: list[tuple] = [(24, 0)] * self.max_i
 
     def reset(self):
         self.i: int = 0
-        self.pairs: list[tuple] = [(6, 0)] * self.max_i
+        self.pairs: list[tuple] = [(24, 0)] * self.max_i
 
     def __add__(self, pair: tuple):
         self.pairs[self.i] = pair
@@ -209,19 +207,29 @@ class steerPredictor:
     def iter(self):
         self.pairs.sort(reverse=self.eval_descending)
         self.s1: int = self.pairs[0][1]
-        
-        idx = self.i // 17
-        if self.i == idx * 17:
+        if self.i == (idx := self.i // 17) * 17:
             self.base = self.s1
-        interval = 2 ** (12 - idx * 3)
-        midpoint = (16, 25, 42, 59, 76, 84)[idx]
+
+        if not self.eval_descending and idx == 0:
+            interval = 8192
+            midpoint = 8
+
+        else:
+            interval = 2 ** (12 - idx * 3)
+            midpoint = (16, 25, 42, 59, 76, 84)[idx]
 
         steer: int = self.base + interval * (midpoint - self.i) * self.direction
-        if abs(steer) > 65536:
-            steer = self.direction * 65536
+        if steer > 65536:
+            steer = 65536
 
-        if steer not in [t[1] for t in self.pairs if t != (6, 0)]:
+        elif steer < -65536:
+            steer = -65536
+
+        if steer not in [t[1] for t in self.pairs if t != (24, 0)]:
             return steer
+
+        elif self.i == self.max_i:
+            return
 
         else:
             self.i += 1
