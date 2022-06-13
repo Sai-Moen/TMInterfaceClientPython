@@ -152,7 +152,7 @@ class MainClient(Client):
         vy = state.velocity[1]
         vz = state.velocity[2]
 
-        v_sideways = vx * xx + vy * yx + vz * zx
+        v_sideways = abs(vx * xx + vy * yx + vz * zx)
         v_forwards = vx * xz + vy * yz + vz * zz
         h_speed = np.linalg.norm((v_sideways, v_forwards)) * 3.6
 
