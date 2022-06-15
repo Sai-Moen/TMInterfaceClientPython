@@ -37,7 +37,7 @@ class MainClient(Client):
 
                 else:
                     iface.log('[Railgun] Timerange changed successfully!', 'success')
-        
+
         elif command == 's4d':
             self.s4d_cfg = not self.s4d_cfg
             iface.log(f'[Railgun] s4d detection; set to {self.s4d_cfg}', 'success')
@@ -55,7 +55,7 @@ class MainClient(Client):
 
         self.input_time = self.time_from
         self.seek = 120
-        self.seek_reset_time = 0
+        self.seek_reset_time = -1
         self.s4d = self.s4d_cfg
         self.sd_eval = self.getHorizontalVelocity if self.sdh_cfg else self.getVelocity
         self.inputs = self.fillInputs(iface)
@@ -92,12 +92,10 @@ class MainClient(Client):
 
         elif _time == self.input_time - 10:
             self.step = iface.get_simulation_state()
-            iface.set_input_state(sim_clear_buffer=False, steer= -self.inputs[_time // 10])
-            # REMOVE "-" AFTER v1.1.2 DROPS, this is a temporary fix for an input flip bug
+            iface.set_input_state(sim_clear_buffer=False, steer=self.inputs[_time // 10])
 
         if self.input_time <= _time < self.input_time + self.seek:
-            iface.set_input_state(sim_clear_buffer=False, steer= -self.steer)
-            # REMOVE "-" AFTER v1.1.2 DROPS, this is a temporary fix for an input flip bug
+            iface.set_input_state(sim_clear_buffer=False, steer=self.steer)
 
     def on_simulation_end(self, iface: TMInterface, result: int):
         print('[Railgun] Saving steering inputs to sd_railgun.txt...')
