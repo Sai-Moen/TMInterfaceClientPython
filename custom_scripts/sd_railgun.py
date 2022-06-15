@@ -12,7 +12,7 @@ class MainClient(Client):
         self.time_from: int = -1
         self.time_to: int = -1
         self.s4d_cfg: bool = False
-        self.sdh_cfg: bool = False
+        self.sdh_cfg: bool = True
 
     def on_registered(self, iface: TMInterface):
         print(f'Registered to {iface.server_name}')
@@ -22,7 +22,7 @@ class MainClient(Client):
         iface.register_custom_command('s4d')
         iface.log('[Railgun] Use the s4d command to toggle s4d assist, False by default')
         iface.register_custom_command('sdh')
-        iface.log('[Railgun] Use the sdh command to toggle local horizontal velocity evaluation, False by default')
+        iface.log('[Railgun] Use the sdh command to toggle local horizontal evaluation, True by default')
 
     def on_custom_command(self, iface: TMInterface, time_from: int, time_to: int, command: str, args: list):
         if command == 'sd':
