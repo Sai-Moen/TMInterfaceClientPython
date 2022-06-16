@@ -3,7 +3,6 @@
 import numpy as np
 from sys import argv
 from tminterface.client import Client, run_client
-from tminterface.constants import ANALOG_STEER_NAME
 from tminterface.interface import TMInterface
 
 class MainClient(Client):
@@ -11,57 +10,73 @@ class MainClient(Client):
         super().__init__()
         self.time_from: int = -1
         self.time_to: int = -1
-        self.s4d_cfg: bool = False
-        self.sdh_cfg: bool = True
+        self.s4d: list[bool] = [False, False]
+        self.do_wiggles: bool = False
+        self.sd_eval: function = self.getHorizontalVelocity
 
     def on_registered(self, iface: TMInterface):
         print(f'Registered to {iface.server_name}')
         iface.execute_command('set controller none')
         iface.register_custom_command('sd')
-        iface.log('[Railgun] Use the sd command to set a time range: time_from-time_to sd')
+        iface.log('[Railgun] Use the sd command to set a time range: time_from-time_to sd <direction>')
         iface.register_custom_command('s4d')
         iface.log('[Railgun] Use the s4d command to toggle s4d assist, False by default')
-        iface.register_custom_command('sdh')
-        iface.log('[Railgun] Use the sdh command to toggle local horizontal evaluation, True by default')
+        iface.register_custom_command('sdmode')
+        iface.log('[Railgun] Use the sdmode command to switch between modes: horizontal (default, local), global and wiggle')
 
     def on_custom_command(self, iface: TMInterface, time_from: int, time_to: int, command: str, args: list):
         if command == 'sd':
-            if len(args) > 0:
-                iface.log('[Railgun] Usage: time_from-time_to sd', 'warning')
+            if time_to == -1 or time_from == -1:
+                iface.log('[Railgun] Timerange not set, Usage: time_from-time_to sd <direction>', 'warning')
+
+            elif len(args) == 1 and args[0] in ('left', 'right'):
+                self.direction = int((args[0] == 'right') - (args[0] == 'left'))
+                self.time_from, self.time_to = time_from, time_to
+                iface.log('[Railgun] sd settings changed successfully!', 'success')
 
             else:
-                self.time_from, self.f_idx = time_from, time_from // 10
-                self.time_to, self.t_idx = time_to, time_to // 10 + 1
-                if self.time_to == -1 or self.time_from == -1:
-                    iface.log('[Railgun] Timerange not set, Usage: time_from-time_to sd', 'warning')
-
-                else:
-                    iface.log('[Railgun] Timerange changed successfully!', 'success')
+                iface.log('[Railgun] Usage: time_from-time_to sd <direction>', 'warning')
 
         elif command == 's4d':
-            self.s4d_cfg = not self.s4d_cfg
-            iface.log(f'[Railgun] s4d detection; set to {self.s4d_cfg}', 'success')
+            self.s4d[1] = not self.s4d[1]
+            iface.log(f'[Railgun] s4d detection set to {self.s4d[1]}', 'success')
 
-        elif command == 'sdh':
-            self.sdh_cfg = not self.sdh_cfg
-            iface.log(f'[Railgun] Local horizontal only evaluation; set to {self.sdh_cfg}', 'success')
+        elif command == 'sdmode':
+            if len(args) == 1:
+                if args[0] == 'horizontal':
+                    self.sd_eval = self.getHorizontalVelocity
+                    self.do_wiggles = False
+
+                elif args[0] == 'global':
+                    self.sd_eval = self.getVelocity
+                    self.do_wiggles = False
+
+                elif args[0] == 'wiggle':
+                    self.sd_eval = self.getHorizontalVelocity
+                    self.do_wiggles = True
+
+                else:
+                    iface.log('[Railgun] Invalid mode', 'error')
+                    return
+
+                iface.log(f'[Railgun] sdmode set to {args[0]}', 'success')
+            
+            else:
+                iface.log('[Railgun] Usage: sdmode mode, where mode is: horizontal, global or wiggle', 'warning')
 
     def on_simulation_begin(self, iface: TMInterface):
         if self.time_to == -1 or self.time_from == -1:
             iface.log('[Railgun] Usage: time_from-time_to sd', 'error')
             iface.log('[Railgun] (closing to prevent exception): You forgot to set a time range', 'error')
             iface.close()
+
         iface.remove_state_validation()
 
         self.input_time = self.time_from
+        self.inputs = [None]
         self.seek = 120
         self.seek_reset_time = -1
-        self.s4d = self.s4d_cfg
-        self.sd_eval = self.getHorizontalVelocity if self.sdh_cfg else self.getVelocity
-        self.inputs = self.fillInputs(iface)
-        self.direction = int(np.sign(sum(
-            self.inputs[self.f_idx:self.t_idx]
-        )))
+        self.s4d[0] = self.s4d[1]
         self.sHelper = steerPredictor(self.direction)
 
     def on_simulation_step(self, iface: TMInterface, _time: int):
@@ -73,26 +88,24 @@ class MainClient(Client):
             iface.rewind_to_state(self.step)
 
         elif _time == self.input_time:
-            if _time == self.seek_reset_time:
-                self.seek = 120
+            if self.inputs[0] == None:
+                self.inputs[0] = iface.get_simulation_state().input_steer
 
+            if self.s4d[0]:
+                self.s4dAssist(iface)
+
+            elif _time == self.seek_reset_time:
+                self.seek = 120
+            
             self.steer: int = self.sHelper.iter()
             if self.sHelper.i == self.sHelper.max_i:
-                self.nextStep(iface, _time)
-
-            elif self.s4d:
-                if self.getSidewaysVelocity(iface) * self.direction < 4:
-                    self.sHelper.best = 65536 * self.direction
-                    self.nextStep(iface, _time)
-
-                else:
-                    self.seek = 130
-                    self.seek_reset_time = _time + 60
-                    self.s4d = False
+                self.nextStep(iface)
 
         elif _time == self.input_time - 10:
             self.step = iface.get_simulation_state()
-            iface.set_input_state(sim_clear_buffer=False, steer=self.inputs[_time // 10])
+            if _time >= self.time_from:
+                idx = (self.input_time - self.time_from) // 10
+                iface.set_input_state(sim_clear_buffer=False, steer=self.inputs[idx])
 
         if self.input_time <= _time < self.input_time + self.seek:
             iface.set_input_state(sim_clear_buffer=False, steer=self.steer)
@@ -106,29 +119,30 @@ class MainClient(Client):
         print('[Railgun] Attempting to back up most recent inputs to sd_railgun.txt...')
         self.writeSteerToFile()
 
-    def fillInputs(self, iface: TMInterface):
-        inputs = [
-            (st.time-100010, st.analog_value)
-            for st in iface.get_event_buffer().find(event_name=ANALOG_STEER_NAME)
-        ]
-
-        for tick in range(self.t_idx):
-            prev_steer = (None, inputs[tick - 1][1] * (tick != 0))
-            try:
-                if inputs[tick][0] != tick * 10:
-                    inputs.insert(tick, prev_steer)
-            except IndexError:
-                inputs.append(prev_steer)
-
-        return [inp[1] for inp in inputs]
-
-    def nextStep(self, iface: TMInterface, time: int):
-        self.inputs[time // 10] = self.sHelper.best
-        print(f'{time} steer {self.sHelper.best} -> {self.getVelocity(iface) * 3.6} km/h')
+    def nextStep(self, iface: TMInterface):
+        self.inputs.append(self.sHelper.best)
+        print(f'{self.input_time} steer {self.sHelper.best} -> {self.getVelocity(iface) * 3.6} km/h')
 
         self.sHelper.reset()
         self.input_time += 10
+
+        if self.do_wiggles and (self.input_time - self.time_from) // 290 % 2:
+            self.sHelper.direction = -self.direction
+
+        else:
+            self.sHelper.direction = self.direction
+
         iface.rewind_to_state(self.step)
+
+    def s4dAssist(self, iface: TMInterface):
+        if self.getSidewaysVelocity(iface) * self.direction < 4:
+            self.sHelper.best = 65536 * self.direction
+            self.nextStep(iface)
+
+        else:
+            self.seek = 130
+            self.seek_reset_time = self.input_time + 60
+            self.s4d[0] = False
 
     @staticmethod
     def getVelocity(iface: TMInterface):
@@ -172,9 +186,8 @@ class MainClient(Client):
             with open('sd_railgun.txt', 'w') as f:
                 f.writelines(
                     [
-                        f'{t[0] * 10} steer {t[1]}\n' for t in
-                        enumerate(self.inputs[self.f_idx:self.t_idx], self.f_idx)
-                        if t[1] != self.inputs[t[0] - 1]
+                        f'{self.time_from + t[0] * 10} steer {t[1]}\n' for t in
+                        enumerate(self.inputs[1:]) if t[1] != self.inputs[t[0]]
                     ]
                 )
         except:
