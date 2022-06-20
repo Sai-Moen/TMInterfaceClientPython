@@ -3,6 +3,7 @@ I will try to say 'python script' when referring to the scripts that interact wi
 
 ## sd_railgun:
 Deterministic, velocity-based procedural speedslide/speeddrift script
+
 ##### Quick setup:
 At no point should you need to edit the code itself, if you find an error, just send it in the TM TAS discord and I will look at it.
 
@@ -47,3 +48,23 @@ After we only changed by 1 unit, pick the best value and display it. (And save i
 
 p.s.
 The reason I named it railgun is because visualizing the code running through the inputs made me think of how a railgun gradually propels its projectile (in this case the stadium car), though I might just have too much imagination.
+
+## Wallhugger
+A script that loves full steering, except when there is a wall.
+
+##### Quick setup:
+At no point should you need to edit the code itself, if you find an error, just send it in the TM TAS discord and I will look at it.
+
+1. Run the python script while TMInterface is open, it should disable bruteforce automatically (with the command 'set controller none').
+2. In the TMInterface console, write down a timerange, followed by 'wallhug' and the direction; (13370-69420 wallhug left, or: 1:23.45-1:34.56 wallhug right, for example).
+3. Press validate on the replay in which you would like to improve your speedslide. The python script will take a while to go through all the ticks, you might find yourself doing only a few ticks per second if the script is really searching.
+4. Afterwards, all of the recommended steering inputs will have been printed to the python terminal and also saved to a file named wallhugger.txt in the same directory as the python script. The inputs in the file do not have duplicates, unlike the terminal, which also has a speedometer that blocks you from easily copying over the inputs.
+5. (Optional) Deregister the python script and go over the inputs with a built-in or script bruteforcer to be sure that all of the map-specific quirks are ironed out. This will also sort your button presses again, if it finds an improvement at least.
+
+##### Common problems:
+The script starts steering 0 if there is no way to dodge a wall from the given game state. Different starting times can drastically alter how it will behave, so try that for a bit. Another useful way to determine the starting time would be looking where you could start fullsteering into the wall you want to hug without crashing within 1-1.5 seconds, and then starting the script one or two ticks before that time. Starting the script very far away from the wall will probably just result in a bonk.
+
+##### Explanation:
+It's very similar to sd_railgun in that it slowly interpolates the steer to tune for a specific goal. In this case the goal is to turn the yaw as much as possible in the chosen direction, without slowing down too much. In this case it re-uses the old sd algorithm because touching the wall is quite noticable, and it can simply try adding a decreasing amount to the highest non-crashing steering value every iteration.
+
+The seeking range is 600ms as of the first version, which makes the script considerably slower than the sd script, while taking 4 times as few steering tests. If a better way of figuring out the tightest steering value is found, this would also speed up the script most likely.
