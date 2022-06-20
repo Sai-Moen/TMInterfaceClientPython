@@ -18,7 +18,7 @@ class MainClient(Client):
         print(f'Registered to {iface.server_name}')
         iface.execute_command('set controller none')
         iface.register_custom_command('sd')
-        iface.log('[Railgun] Use the sd command to set a time range: time_from-time_to sd <direction>')
+        iface.log('[Railgun] Use the sd command to set a time range and direction: time_from-time_to sd <direction>')
         iface.register_custom_command('s4d')
         iface.log('[Railgun] Use the s4d command to toggle s4d assist, False by default')
         iface.register_custom_command('sdmode')
@@ -77,14 +77,14 @@ class MainClient(Client):
         self.seek = 120
         self.seek_reset_time = -1
         self.s4d[0] = self.s4d[1]
-        self.sHelper = steerPredictor(self.direction)
+        self.railgun = steerPredictor(self.direction)
 
     def on_simulation_step(self, iface: TMInterface, _time: int):
         if self.input_time > self.time_to:
             return
 
         elif _time == self.input_time + self.seek:
-            self.sHelper + (self.sd_eval(iface), self.steer)
+            self.railgun + (self.sd_eval(iface), self.steer)
             iface.rewind_to_state(self.step)
 
         elif _time == self.input_time:
@@ -97,8 +97,8 @@ class MainClient(Client):
             elif _time == self.seek_reset_time:
                 self.seek = 120
             
-            self.steer: int = self.sHelper.iter()
-            if self.sHelper.i == self.sHelper.max_i:
+            self.steer: int = self.railgun.iter()
+            if self.railgun.i == self.railgun.max_i:
                 self.nextStep(iface)
 
         elif _time == self.input_time - 10:
@@ -120,23 +120,23 @@ class MainClient(Client):
         self.writeSteerToFile()
 
     def nextStep(self, iface: TMInterface):
-        self.inputs.append(self.sHelper.best)
-        print(f'{self.input_time} steer {self.sHelper.best} -> {self.getVelocity(iface) * 3.6} km/h')
+        self.inputs.append(self.railgun.best)
+        print(f'{self.input_time} steer {self.railgun.best} -> {self.getVelocity(iface) * 3.6} km/h')
 
-        self.sHelper.reset()
+        self.railgun.reset()
         self.input_time += 10
 
         if self.do_wiggles and (self.input_time - self.time_from) // 290 % 2:
-            self.sHelper.direction = -self.direction
+            self.railgun.direction = -self.direction
 
         else:
-            self.sHelper.direction = self.direction
+            self.railgun.direction = self.direction
 
         iface.rewind_to_state(self.step)
 
     def s4dAssist(self, iface: TMInterface):
         if self.getSidewaysVelocity(iface) * self.direction < 4:
-            self.sHelper.best = 65536 * self.direction
+            self.railgun.best = 65536 * self.direction
             self.nextStep(iface)
 
         else:
