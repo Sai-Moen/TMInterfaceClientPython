@@ -30,7 +30,7 @@ class MainClient(Client):
                 iface.log('[Railgun] Timerange not set, Usage: time_from-time_to sd <direction>', 'warning')
 
             elif len(args) == 1 and args[0] in ('left', 'right'):
-                self.direction = int((args[0] == 'right') - (args[0] == 'left'))
+                self.direction = int(args[0] == 'right') - int(args[0] == 'left')
                 self.time_from, self.time_to = time_from, time_to
                 iface.log('[Railgun] sd settings changed successfully!', 'success')
 
@@ -71,6 +71,7 @@ class MainClient(Client):
             iface.close()
 
         iface.remove_state_validation()
+        iface.set_simulation_time_limit(self.time_to - 9880) # tmp manual offset
 
         self.input_time = self.time_from
         self.inputs = [None]
@@ -80,10 +81,7 @@ class MainClient(Client):
         self.railgun = steerPredictor(self.direction)
 
     def on_simulation_step(self, iface: TMInterface, _time: int):
-        if self.input_time > self.time_to:
-            return
-
-        elif _time == self.input_time + self.seek:
+        if _time == self.input_time + self.seek:
             self.railgun + (self.sd_eval(iface), self.steer)
             iface.rewind_to_state(self.step)
 
@@ -104,8 +102,10 @@ class MainClient(Client):
         elif _time == self.input_time - 10:
             self.step = iface.get_simulation_state()
             if _time >= self.time_from:
-                idx = (self.input_time - self.time_from) // 10
-                iface.set_input_state(sim_clear_buffer=False, steer=self.inputs[idx])
+                iface.set_input_state(
+                    sim_clear_buffer=False,
+                    steer=self.inputs[(self.input_time - self.time_from) // 10]
+                )
 
         if self.input_time <= _time < self.input_time + self.seek:
             iface.set_input_state(sim_clear_buffer=False, steer=self.steer)
@@ -135,7 +135,18 @@ class MainClient(Client):
         iface.rewind_to_state(self.step)
 
     def s4dAssist(self, iface: TMInterface):
-        if self.getSidewaysVelocity(iface) * self.direction < 4:
+        state = iface.get_simulation_state()
+
+        xx = state.rotation_matrix[0][0]
+        yx = state.rotation_matrix[1][0]
+        zx = state.rotation_matrix[2][0]
+
+        vx = state.velocity[0]
+        vy = state.velocity[1]
+        vz = state.velocity[2]
+
+        vx_local = vx * xx + vy * yx + vz * zx
+        if vx_local * self.direction < 4:
             self.railgun.best = 65536 * self.direction
             self.nextStep(iface)
 
@@ -171,15 +182,6 @@ class MainClient(Client):
             )
         )
 
-    @staticmethod
-    def getSidewaysVelocity(iface: TMInterface):
-        state = iface.get_simulation_state()
-        return (
-            state.velocity[0] * state.rotation_matrix[0][0] +
-            state.velocity[1] * state.rotation_matrix[1][0] +
-            state.velocity[2] * state.rotation_matrix[2][0]
-        )
-
     def writeSteerToFile(self):
         msg = 'success!'
         try:
@@ -201,6 +203,8 @@ class steerPredictor:
         self.i: int = 0
         self.max_i: int = 85
         self.vdata: list[tuple] = [(0, 0)] * self.max_i
+        self.interval = (4096, 512, 64, 8, 1, 0)
+        self.offset = (16, 25, 42, 59, 76, 84)
 
     def reset(self):
         self.i: int = 0
@@ -216,21 +220,16 @@ class steerPredictor:
 
         if self.i == (idx := self.i // 17) * 17:
             self.base = self.best
-        interval = 2 ** (12 - idx * 3)
-        midpoint = (16, 25, 42, 59, 76, 84)[idx]
 
-        steer: int = self.base + interval * (midpoint - self.i) * self.direction
+        steer: int = self.base + self.interval[idx] * (self.offset[idx] - self.i) * self.direction
         if steer > 65536:
             steer = 65536
 
         elif steer < -65536:
             steer = -65536
 
-        if steer not in [v[1] for v in self.vdata if v != (0, 0)]:
+        if steer not in [v[1] for v in self.vdata if v != (0, 0)] or self.i == self.max_i:
             return steer
-
-        elif self.i == self.max_i:
-            return
 
         else:
             self.i += 1
