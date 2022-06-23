@@ -99,15 +99,11 @@ class MainClient(Client):
             if self.railgun.i == self.railgun.max_i:
                 self.nextStep(iface)
 
-            iface.set_input_state(sim_clear_buffer=False, steer=self.steer)
+            else:
+                iface.set_input_state(sim_clear_buffer=False, steer=self.steer)
 
         elif _time == self.input_time - 10:
             self.step = iface.get_simulation_state()
-            if _time >= self.time_from:
-                iface.set_input_state(
-                    sim_clear_buffer=False,
-                    steer=self.inputs[(self.input_time - self.time_from) // 10]
-                )
 
     def on_simulation_end(self, iface: TMInterface, result: int):
         print('[Railgun] Saving steering inputs to sd_railgun.txt...')
@@ -119,6 +115,7 @@ class MainClient(Client):
         self.writeSteerToFile()
 
     def nextStep(self, iface: TMInterface):
+        iface.set_input_state(sim_clear_buffer=False, steer=self.railgun.best)
         self.inputs.append(self.railgun.best)
         print(f'{self.input_time} steer {self.railgun.best} -> {self.getVelocity(iface) * 3.6} km/h')
 
@@ -149,9 +146,10 @@ class MainClient(Client):
             self.railgun.best = 65536 * self.direction
             self.nextStep(iface)
 
-        self.seek = 130
-        self.seek_reset_time = self.input_time + 60
-        self.s4d[0] = False
+        else:
+            self.seek = 130
+            self.seek_reset_time = self.input_time + 60
+            self.s4d[0] = False
 
     @staticmethod
     def getVelocity(iface: TMInterface):
