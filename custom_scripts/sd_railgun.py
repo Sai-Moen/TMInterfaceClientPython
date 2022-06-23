@@ -60,7 +60,7 @@ class MainClient(Client):
                     return
 
                 iface.log(f'[Railgun] sdmode set to {args[0]}', 'success')
-            
+
             else:
                 iface.log('[Railgun] Usage: sdmode mode, where mode is: horizontal, global or wiggle', 'warning')
 
@@ -94,10 +94,12 @@ class MainClient(Client):
 
             elif _time == self.seek_reset_time:
                 self.seek = 120
-            
+
             self.steer: int = self.railgun.iter()
             if self.railgun.i == self.railgun.max_i:
                 self.nextStep(iface)
+
+            iface.set_input_state(sim_clear_buffer=False, steer=self.steer)
 
         elif _time == self.input_time - 10:
             self.step = iface.get_simulation_state()
@@ -106,9 +108,6 @@ class MainClient(Client):
                     sim_clear_buffer=False,
                     steer=self.inputs[(self.input_time - self.time_from) // 10]
                 )
-
-        if self.input_time <= _time < self.input_time + self.seek:
-            iface.set_input_state(sim_clear_buffer=False, steer=self.steer)
 
     def on_simulation_end(self, iface: TMInterface, result: int):
         print('[Railgun] Saving steering inputs to sd_railgun.txt...')
@@ -150,10 +149,9 @@ class MainClient(Client):
             self.railgun.best = 65536 * self.direction
             self.nextStep(iface)
 
-        else:
-            self.seek = 130
-            self.seek_reset_time = self.input_time + 60
-            self.s4d[0] = False
+        self.seek = 130
+        self.seek_reset_time = self.input_time + 60
+        self.s4d[0] = False
 
     @staticmethod
     def getVelocity(iface: TMInterface):
@@ -204,7 +202,7 @@ class steerPredictor:
         self.max_i: int = 85
         self.vdata: list[tuple] = [(0, 0)] * self.max_i
         self.interval = (4096, 512, 64, 8, 1, 0)
-        self.offset = (16, 25, 42, 59, 76, 84)
+        self.offset = (16, 25, 42, 59, 76, 85)
 
     def reset(self):
         self.i: int = 0
@@ -231,9 +229,8 @@ class steerPredictor:
         if steer not in [v[1] for v in self.vdata if v != (0, 0)] or self.i == self.max_i:
             return steer
 
-        else:
-            self.i += 1
-            return self.iter()
+        self.i += 1
+        return self.iter()
 
 if __name__ == '__main__':
     server_name = f'TMInterface{argv[1]}' if len(argv) > 1 else 'TMInterface0'
