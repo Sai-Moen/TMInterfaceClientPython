@@ -99,11 +99,11 @@ class MainClient(Client):
             if self.railgun.i == self.railgun.max_i:
                 self.nextStep(iface)
 
-            else:
-                iface.set_input_state(sim_clear_buffer=False, steer=self.steer)
-
         elif _time == self.input_time - 10:
             self.step = iface.get_simulation_state()
+
+        if self.input_time <= _time < self.input_time + self.seek:
+            iface.set_input_state(sim_clear_buffer=False, steer=self.steer)
 
     def on_simulation_end(self, iface: TMInterface, result: int):
         print('[Railgun] Saving steering inputs to sd_railgun.txt...')
