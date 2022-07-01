@@ -115,19 +115,22 @@ class MainClient(Client):
         self.writeSteerToFile()
 
     def nextStep(self, iface: TMInterface):
-        iface.set_input_state(sim_clear_buffer=False, steer=self.railgun.best)
-        self.inputs.append(self.railgun.best)
-        print(f'{self.input_time} steer {self.railgun.best} -> {self.getVelocity(iface) * 3.6} km/h')
-
-        self.railgun.reset()
-        self.input_time += 10
-
-        if self.do_wiggles and (self.input_time - self.time_from) // 290 % 2:
+        if self.railgun.best * self.direction < 0 and self.railgun.direction == self.direction:
             self.railgun.direction = -self.direction
 
         else:
-            self.railgun.direction = self.direction
+            iface.set_input_state(sim_clear_buffer=False, steer=self.railgun.best)
+            self.inputs.append(self.railgun.best)
+            print(f'{self.input_time} steer {self.railgun.best} -> {self.getVelocity(iface) * 3.6} km/h')
 
+            self.input_time += 10
+            if self.do_wiggles and (self.input_time - self.time_from) // 290 % 2:
+                self.railgun.direction = -self.direction
+
+            else:
+                self.railgun.direction = self.direction
+
+        self.railgun.reset()
         iface.rewind_to_state(self.step)
 
     def s4dAssist(self, iface: TMInterface):
