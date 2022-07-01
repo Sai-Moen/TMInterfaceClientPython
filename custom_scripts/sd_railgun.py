@@ -84,6 +84,7 @@ class MainClient(Client):
         if _time == self.input_time + self.seek:
             self.railgun + (self.sd_eval(iface), self.steer)
             iface.rewind_to_state(self.step)
+            return
 
         elif _time == self.input_time:
             if self.inputs[0] == None:
@@ -91,6 +92,8 @@ class MainClient(Client):
 
             if self.s4d[0]:
                 self.s4dAssist(iface)
+                if self.s4d[0]:
+                    return
 
             elif _time == self.seek_reset_time:
                 self.seek = 120
@@ -98,11 +101,13 @@ class MainClient(Client):
             self.steer: int = self.railgun.iter()
             if self.railgun.i == self.railgun.max_i:
                 self.nextStep(iface)
+                return
 
         elif _time == self.input_time - 10:
             self.step = iface.get_simulation_state()
+            return
 
-        if self.input_time <= _time < self.input_time + self.seek:
+        if _time >= self.input_time:
             iface.set_input_state(sim_clear_buffer=False, steer=self.steer)
 
     def on_simulation_end(self, iface: TMInterface, result: int):
