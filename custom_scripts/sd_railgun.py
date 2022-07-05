@@ -120,7 +120,8 @@ class MainClient(Client):
         self.writeSteerToFile()
 
     def nextStep(self, iface: TMInterface):
-        if self.railgun.best * self.direction < 0 and self.railgun.direction == self.direction:
+        countersteer = self.railgun.best * self.direction < 0 and self.railgun.direction == self.direction
+        if countersteer and not self.do_wiggles:
             self.railgun.direction = -self.direction
 
         else:
