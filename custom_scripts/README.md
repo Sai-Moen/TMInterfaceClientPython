@@ -57,7 +57,7 @@ At no point should you need to edit the code itself, if you find an error, just 
 
 1. Run the python script while TMInterface is open, it should disable bruteforce automatically (with the command 'set controller none').
 2. In the TMInterface console, write down a timerange, followed by 'wallhug' and the direction; (13370-69420 wallhug left, or: 1:23.45-1:34.56 wallhug right, for example).
-3. Press validate on the replay in which you would like to improve your speedslide. The python script will take a while to go through all the ticks, you might find yourself doing only a few ticks per second if the script is really searching.
+3. Press validate on the replay in which you would like to improve your wallhug. The python script will take a while to go through all the ticks, you might find yourself doing only a few ticks per second if the script is really searching.
 4. Afterwards, all of the recommended steering inputs will have been printed to the python terminal and also saved to a file named wallhugger.txt in the same directory as the python script. The inputs in the file do not have duplicates, unlike the terminal, which also has a speedometer that blocks you from easily copying over the inputs.
 5. (Optional) Deregister the python script and go over the inputs with a built-in or script bruteforcer to be sure that all of the map-specific quirks are ironed out. This will also sort your button presses again, if it finds an improvement at least.
 
