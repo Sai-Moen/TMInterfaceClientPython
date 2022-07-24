@@ -16,7 +16,6 @@ class MainClient(Client):
         self.default_seek: int = 120
         self.max_wiggle_timer: int = 300
         self.sdmode: list[bool] = [False, False]
-        self.countersteered: list[bool] = [False, True]
 
         # Global to Local velocity vector transposing lambda
         self.stateToLocalVelocity = lambda state, idx: np.sum(
@@ -43,9 +42,7 @@ class MainClient(Client):
         iface.register_custom_command('sd')
         iface.log('[Railgun] Use the sd command to set a time range and direction: time_from-time_to sd <direction>')
         iface.register_custom_command('sdmode')
-        iface.log('[Railgun] Use the sdmode command to switch between: normal, s4d or wiggle. normal by default')
-        iface.register_custom_command('sdcounter')
-        iface.log('[Railgun] Use the sdcounter command to toggle countersteering (past steer 0), True by default')
+        iface.log('[Railgun] Use the sdmode command to switch between: normal, s4d, s4dirt or wiggle. normal by default')
 
     def on_custom_command(self, iface: TMInterface, time_from: int, time_to: int, command: str, args: list):
         if command == 'sd':
@@ -63,7 +60,7 @@ class MainClient(Client):
         elif command == 'sdmode':
             if len(args) == 0:
                 self.sdmode = [False, False]
-                iface.log('[Railgun] sdmode set to normal', 'success')
+                iface.log('[Railgun] sdmode reset to normal', 'success')
 
             elif len(args) == 1:
                 if args[0] == 'normal':
@@ -72,6 +69,12 @@ class MainClient(Client):
 
                 elif args[0] == 's4d':
                     self.sdmode = [True, False]
+                    self.minLvx = lambda speed: 4 - 0.5 * ((401 < speed < 501) * ((speed - 401) / 100) + (speed >= 501))
+                    iface.log('[Railgun] sdmode set to s4d', 'success')
+                
+                elif args[0] == 's4dirt':
+                    self.sdmode = [True, False]
+                    self.minLvx = lambda speed: 0.25 + 0.25 * (speed >= 234)
                     iface.log('[Railgun] sdmode set to s4d', 'success')
 
                 elif args[0] == 'wiggle':
@@ -82,11 +85,7 @@ class MainClient(Client):
                     iface.log('[Railgun] Invalid mode', 'warning')
 
             else:
-                iface.log('[Railgun] Usage: sdmode <normal, s4d or wiggle>', 'warning')
-
-        elif command == 'sdcounter':
-            self.countersteered[1] = not self.countersteered[1]
-            iface.log(f'[Railgun] Countersteering set to {self.countersteered[1]}', 'success')
+                iface.log('[Railgun] Usage: sdmode <normal, s4d, s4dirt or wiggle>', 'warning')
 
     def on_simulation_begin(self, iface: TMInterface):
         # Close because otherwise we get an exception and close anyway
@@ -103,8 +102,8 @@ class MainClient(Client):
         # Variable config
         self.input_time = self.time_from
         self.inputs = [None]
-        self.countersteered[0] = False
-        self.railgun = steerPredictor(self.direction, self.countersteered[1])
+        self.countersteered = False
+        self.railgun = steerPredictor(self.direction)
         self.seek = self.default_seek
         self.seek_reset_time = -1
         self.s4d, self.wiggle = self.sdmode
@@ -146,16 +145,15 @@ class MainClient(Client):
     def on_simulation_end(self, iface: TMInterface, result: int):
         print('[Railgun] Saving steering inputs to sd_railgun.txt...')
         self.writeSteerToFile()
-        print('[Railgun] Saved! Keep in mind that this is only the pad steering inputs found, and nothing else.')
 
     def on_deregistered(self, iface: TMInterface):
         print('[Railgun] Attempting to back up most recent inputs to sd_railgun.txt...')
         self.writeSteerToFile()
 
     def nextStep(self, iface: TMInterface):
-        if self.railgun.best * self.railgun.direction < 0 and self.countersteered == [False, True]:
+        if self.railgun.best * self.railgun.direction < 0 and not self.countersteered:
             self.railgun.direction *= -1
-            self.countersteered[0] = True
+            self.countersteered = True
 
         else:
             iface.set_input_state(sim_clear_buffer=False, steer=self.railgun.best)
@@ -164,12 +162,18 @@ class MainClient(Client):
             print(f'{self.input_time} steer {self.railgun.best} -> {v * 3.6} km/h')
 
             self.input_time += 10
-            if self.countersteered[0]:
+            if self.countersteered:
                 self.railgun.direction *= -1
-                self.countersteered[0] = False
+                self.countersteered = False
 
             if self.wiggle:
-                self.wiggleAssist(v)
+                self.wiggle_timer -= 10
+                if v < np.linalg.norm(self.step.velocity):
+                    self.wiggle_timer = self.max_wiggle_timer
+
+                elif not self.wiggle_timer:
+                    self.wiggle_timer = self.max_wiggle_timer
+                    self.railgun.direction *= -1
 
         self.railgun.reset()
         iface.rewind_to_state(self.step)
@@ -177,11 +181,8 @@ class MainClient(Client):
     def s4dAssist(self, iface: TMInterface):
         state = iface.get_simulation_state()
 
-        speed = np.linalg.norm(state.velocity) * 3.6
-        min_lvx = 4 - 0.5 * ((401 < speed < 501) * ((speed - 401) / 100) + (speed >= 501))
-        lvx = self.stateToLocalVelocity(state, 0) * self.railgun.direction
-
-        if lvx < min_lvx:
+        local_vx = self.stateToLocalVelocity(state, 0) * self.railgun.direction
+        if local_vx < self.minLvx(np.linalg.norm(state.velocity) * 3.6):
             self.railgun.best = 65536 * self.railgun.direction
             self.nextStep(iface)
 
@@ -189,15 +190,6 @@ class MainClient(Client):
             self.seek = 130
             self.seek_reset_time = self.input_time + 60
             self.s4d = False
-
-    def wiggleAssist(self, v):
-        self.wiggle_timer -= 10
-        if v < np.linalg.norm(self.step.velocity):
-            self.wiggle_timer = self.max_wiggle_timer
-
-        elif not self.wiggle_timer:
-            self.wiggle_timer = self.max_wiggle_timer
-            self.railgun.direction *= -1
 
     def writeSteerToFile(self):
         msg = 'success!'
@@ -215,9 +207,8 @@ class MainClient(Client):
             print(f'[Railgun] Input write {msg}')
 
 class steerPredictor:
-    def __init__(self, direction: int, countersteer: bool):
+    def __init__(self, direction: int):
         self.direction: int = direction
-        self.limitInputs: function = self.limitInputsNormal if countersteer else self.limitInputsNoCounter
         self.i: int = 0
         self.max_i: int = 85
         self.vdata: list[tuple] = [(0, 0)] * self.max_i
@@ -247,12 +238,8 @@ class steerPredictor:
         self.i += 1
         return self.iter()
 
-    def limitInputsNormal(self, steer: int):
+    def limitInputs(self, steer: int):
         return steer if abs(steer) <= 65536 else 65536 * self.direction
-
-    def limitInputsNoCounter(self, steer: int):
-        steer = self.limitInputsNormal(steer)
-        return steer if steer * self.direction >= 0 else 0
 
 if __name__ == '__main__':
     try:
