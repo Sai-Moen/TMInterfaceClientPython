@@ -42,7 +42,9 @@ class MainClient(Client):
         iface.register_custom_command('sd')
         iface.log('[Railgun] Use the sd command to set a time range and direction: time_from-time_to sd <direction>')
         iface.register_custom_command('sdmode')
-        iface.log('[Railgun] Use the sdmode command to switch between: normal, s4d, s4dirt or wiggle. normal by default')
+        iface.log(
+            '[Railgun] Use the sdmode command to switch between: normal, s4d, s4dirt, wiggle or wiggledirt. normal by default.'
+        )
 
     def on_custom_command(self, iface: TMInterface, time_from: int, time_to: int, command: str, args: list):
         if command == 'sd':
@@ -65,27 +67,30 @@ class MainClient(Client):
             elif len(args) == 1:
                 if args[0] == 'normal':
                     self.sdmode = [False, False]
-                    iface.log('[Railgun] sdmode set to normal', 'success')
 
                 elif args[0] == 's4d':
                     self.sdmode = [True, False]
                     self.minLvx = lambda speed: 4 - 0.5 * ((401 < speed < 501) * ((speed - 401) / 100) + (speed >= 501))
-                    iface.log('[Railgun] sdmode set to s4d', 'success')
                 
                 elif args[0] == 's4dirt':
                     self.sdmode = [True, False]
                     self.minLvx = lambda speed: 0.25 + 0.25 * (speed >= 234)
-                    iface.log('[Railgun] sdmode set to s4d', 'success')
 
                 elif args[0] == 'wiggle':
                     self.sdmode = [False, True]
-                    iface.log('[Railgun] sdmode set to wiggle', 'success')
+
+                elif args[0] == 'wiggledirt':
+                    self.sdmode = [True, True]
+                    self.minLvx = lambda speed: 0.25 + 0.25 * (speed >= 234)
 
                 else:
                     iface.log('[Railgun] Invalid mode', 'warning')
+                    return
+                
+                iface.log(f'[Railgun] sdmode set to {args[0]}', 'success')
 
             else:
-                iface.log('[Railgun] Usage: sdmode <normal, s4d, s4dirt or wiggle>', 'warning')
+                iface.log('[Railgun] Usage: sdmode <normal, s4d, s4dirt, wiggle or wiggledirt>', 'warning')
 
     def on_simulation_begin(self, iface: TMInterface):
         # Close because otherwise we get an exception and close anyway
@@ -107,6 +112,7 @@ class MainClient(Client):
         self.seek = self.default_seek
         self.seek_reset_time = -1
         self.s4d, self.wiggle = self.sdmode
+        self.wiggledirt = all(self.sdmode)
         self.wiggle_timer = self.max_wiggle_timer
 
     def on_simulation_step(self, iface: TMInterface, _time: int):
@@ -119,20 +125,8 @@ class MainClient(Client):
             return
 
         elif _time == self.input_time:
-            if self.inputs[0] == None:
-                self.inputs[0] = iface.get_simulation_state().input_steer
-
-            if self.s4d:
-                self.s4dAssist(iface)
-                if self.s4d:
-                    return
-
-            elif _time == self.seek_reset_time:
-                self.seek = self.default_seek
-
-            self.steer: int = self.railgun.iter()
-            if self.railgun.i == self.railgun.max_i:
-                self.nextStep(iface)
+            self.atInputTime(iface)
+            if self.railgun.i == self.railgun.max_i or self.s4d:
                 return
 
         elif _time == self.input_time - 10:
@@ -150,6 +144,30 @@ class MainClient(Client):
         print('[Railgun] Attempting to back up most recent inputs to sd_railgun.txt...')
         self.writeSteerToFile()
 
+    def atInputTime(self, iface: TMInterface):
+        self.state = iface.get_simulation_state()
+        if self.inputs[0] == None:
+            self.inputs[0] = self.state.input_steer
+
+        if self.s4d:
+            local_vx = self.stateToLocalVelocity(self.state, 0) * self.railgun.direction
+            if local_vx < self.minLvx(np.linalg.norm(self.state.velocity) * 3.6):
+                self.railgun.best = 65536 * self.railgun.direction
+                self.nextStep(iface)
+                return
+
+            else:
+                self.seek = 130
+                self.seek_reset_time = self.input_time + 60
+                self.s4d = False
+
+        elif self.input_time == self.seek_reset_time:
+            self.seek = self.default_seek
+
+        self.steer: int = self.railgun.iter()
+        if self.railgun.i == self.railgun.max_i:
+            self.nextStep(iface)
+
     def nextStep(self, iface: TMInterface):
         if self.railgun.best * self.railgun.direction < 0 and not self.countersteered:
             self.railgun.direction *= -1
@@ -158,8 +176,7 @@ class MainClient(Client):
         else:
             iface.set_input_state(sim_clear_buffer=False, steer=self.railgun.best)
             self.inputs.append(self.railgun.best)
-            v = np.linalg.norm(iface.get_simulation_state().velocity)
-            print(f'{self.input_time} steer {self.railgun.best} -> {v * 3.6} km/h')
+            print(f'{self.input_time} steer {self.railgun.best} -> {(v := np.linalg.norm(self.state.velocity)) * 3.6} km/h')
 
             self.input_time += 10
             if self.countersteered:
@@ -174,22 +191,10 @@ class MainClient(Client):
                 elif not self.wiggle_timer:
                     self.wiggle_timer = self.max_wiggle_timer
                     self.railgun.direction *= -1
+                    self.s4d = self.wiggledirt
 
         self.railgun.reset()
         iface.rewind_to_state(self.step)
-
-    def s4dAssist(self, iface: TMInterface):
-        state = iface.get_simulation_state()
-
-        local_vx = self.stateToLocalVelocity(state, 0) * self.railgun.direction
-        if local_vx < self.minLvx(np.linalg.norm(state.velocity) * 3.6):
-            self.railgun.best = 65536 * self.railgun.direction
-            self.nextStep(iface)
-
-        else:
-            self.seek = 130
-            self.seek_reset_time = self.input_time + 60
-            self.s4d = False
 
     def writeSteerToFile(self):
         msg = 'success!'
