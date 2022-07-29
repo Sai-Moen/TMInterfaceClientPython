@@ -7,6 +7,8 @@ from tminterface.interface import TMInterface
 from struct import unpack
 from tminterface.constants import SIMULATION_WHEELS_SIZE
 
+USE_DECIMAL_NOTATION = False # set to True for decimal notation, False for milliseconds
+
 class MainClient(Client):
     def __init__(self):
         # Default config
@@ -16,6 +18,10 @@ class MainClient(Client):
         self.default_seek: int = 120
         self.max_wiggle_timer: int = 300
         self.sdmode: list[bool] = [False, False]
+
+        # set time notation function pointer
+        generateMS = lambda tick: self.time_from + tick * 10
+        self.generateCmdTime = self.generateDecimal if USE_DECIMAL_NOTATION else generateMS
 
         # Global to Local velocity vector transposing lambda
         self.stateToLocalVelocity = lambda state, idx: np.sum(
@@ -202,7 +208,7 @@ class MainClient(Client):
             with open('sd_railgun.txt', 'w') as f:
                 f.writelines(
                     [
-                        f'{self.time_from + t[0] * 10} steer {t[1]}\n' for t in
+                        f'{self.generateCmdTime(t[0])} steer {t[1]}\n' for t in
                         enumerate(self.inputs[1:]) if t[1] != self.inputs[t[0]]
                     ]
                 )
@@ -210,6 +216,17 @@ class MainClient(Client):
             msg = 'failed.'
         finally:
             print(f'[Railgun] Input write {msg}')
+
+    def generateDecimal(self, tick: int):
+        t = self.time_from // 10 + tick
+        h, m, s, c = t//360000, t//6000%60, t//100%60, t%100
+
+        c = f'{c / 100}'.removeprefix('0')
+        s = f'{s}'
+        m = f'{m}:' if h or m else ''
+        h = f'{h}:' if h else ''
+
+        return h + m + s + c
 
 class steerPredictor:
     def __init__(self, direction: int):
