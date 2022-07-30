@@ -29,7 +29,7 @@ class MainClient(Client):
         )
 
         # Evaluation velocity calculation lambda
-        allWheelsOnGround = lambda state: all(
+        notAllWheelsOnGround = lambda state: not all(
             [
                 unpack('i', state.simulation_wheels[i+292:i+296])[0]
                 for i in [(SIMULATION_WHEELS_SIZE // 4) * j for j in range(4)]
@@ -38,8 +38,9 @@ class MainClient(Client):
         self.getEvalVelocity = lambda state: np.linalg.norm(
             (
                 self.stateToLocalVelocity(state, 0),
+                self.stateToLocalVelocity(state, 1) * notAllWheelsOnGround(state),
                 self.stateToLocalVelocity(state, 2)
-            ) if allWheelsOnGround(state) else state.velocity
+            )
         )
 
     def on_registered(self, iface: TMInterface):
@@ -76,18 +77,18 @@ class MainClient(Client):
 
                 elif args[0] == 's4d':
                     self.sdmode = [True, False]
-                    self.minLvx = lambda speed: 4 - 0.5 * ((401 < speed < 501) * ((speed - 401) / 100) + (speed >= 501))
+                    self.minLvx = lambda speed: 4 - 0.5 * ((speed > 401) * ((speed - 401) / 100))
                 
                 elif args[0] == 's4dirt':
                     self.sdmode = [True, False]
-                    self.minLvx = lambda speed: 0.25 + 0.25 * (speed >= 234)
+                    self.minLvx = lambda speed: 0.25 + 0.25 * (speed > 235)
 
                 elif args[0] == 'wiggle':
                     self.sdmode = [False, True]
 
                 elif args[0] == 'wiggledirt':
                     self.sdmode = [True, True]
-                    self.minLvx = lambda speed: 0.25 + 0.25 * (speed >= 234)
+                    self.minLvx = lambda speed: 0.25 + 0.25 * (speed > 235)
 
                 else:
                     iface.log('[Railgun] Invalid mode', 'warning')
@@ -132,7 +133,7 @@ class MainClient(Client):
 
         elif _time == self.input_time:
             self.atInputTime(iface)
-            if self.railgun.i == self.railgun.max_i or self.s4d:
+            if self.railgun.isLastIteration() or self.s4d:
                 return
 
         elif _time == self.input_time - 10:
@@ -158,7 +159,7 @@ class MainClient(Client):
         if self.s4d:
             local_vx = self.stateToLocalVelocity(self.state, 0) * self.railgun.direction
             if local_vx < self.minLvx(np.linalg.norm(self.state.velocity) * 3.6):
-                self.railgun.best = 65536 * self.railgun.direction
+                self.railgun.fullSteer()
                 self.nextStep(iface)
                 return
 
@@ -171,23 +172,23 @@ class MainClient(Client):
             self.seek = self.default_seek
 
         self.steer: int = self.railgun.iter()
-        if self.railgun.i == self.railgun.max_i:
+        if self.railgun.isLastIteration():
             self.nextStep(iface)
 
     def nextStep(self, iface: TMInterface):
-        if self.railgun.best * self.railgun.direction < 0 and not self.countersteered:
-            self.railgun.direction *= -1
-            self.countersteered = True
+        if self.railgun.isCountersteering() and not self.countersteered:
+            self.toggleCountersteer()
 
         else:
             iface.set_input_state(sim_clear_buffer=False, steer=self.railgun.best)
             self.inputs.append(self.railgun.best)
-            print(f'{self.input_time} steer {self.railgun.best} -> {(v := np.linalg.norm(self.state.velocity)) * 3.6} km/h')
+            print(
+                f'{self.input_time} steer {self.railgun.best} -> {(v := np.linalg.norm(self.state.velocity)) * 3.6} km/h'
+            )
 
             self.input_time += 10
             if self.countersteered:
-                self.railgun.direction *= -1
-                self.countersteered = False
+                self.toggleCountersteer()
 
             if self.wiggle:
                 self.wiggle_timer -= 10
@@ -201,6 +202,10 @@ class MainClient(Client):
 
         self.railgun.reset()
         iface.rewind_to_state(self.step)
+
+    def toggleCountersteer(self):
+        self.railgun.direction *= -1
+        self.countersteered = not self.countersteered
 
     def writeSteerToFile(self):
         msg = 'success!'
@@ -236,6 +241,8 @@ class steerPredictor:
         self.vdata: list[tuple] = [(0, 0)] * self.max_i
         self.interval: tuple[int] = (4096, 512, 64, 8, 1, 0)
         self.offset: tuple[int] = (16, 25, 42, 59, 76, 85)
+        self.isLastIteration = lambda: self.i == self.max_i
+        self.isCountersteering = lambda: self.best * self.direction < 0
 
     def reset(self):
         self.i: int = 0
@@ -254,7 +261,7 @@ class steerPredictor:
 
         steer: int = self.base + self.interval[idx] * (self.offset[idx] - self.i) * self.direction
         steer: int = self.limitInputs(steer)
-        if steer not in [v[1] for v in self.vdata if v != (0, 0)] or self.i == self.max_i:
+        if steer not in [v[1] for v in self.vdata if v != (0, 0)] or self.isLastIteration():
             return steer
 
         self.i += 1
@@ -262,6 +269,9 @@ class steerPredictor:
 
     def limitInputs(self, steer: int):
         return steer if abs(steer) <= 65536 else 65536 * self.direction
+
+    def fullSteer(self):
+        self.best = 65536 * self.direction
 
 if __name__ == '__main__':
     try:
