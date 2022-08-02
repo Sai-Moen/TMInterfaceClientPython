@@ -279,9 +279,6 @@ class steerPredictor:
         self.isLastIteration = lambda: self.i == self.max_i
         self.isNewSteer = lambda: self.steer not in [v[1] for v in self.vdata if v != (0, 0)]
         self.isCountersteering = lambda: self.best * self.direction < 0
-        self.calculateSteer = lambda: self.base + (
-            self.interval[self.idx] * (self.offset[self.idx] - self.i) * self.direction
-        )
 
     def reset(self):
         self.i: int = 0
@@ -298,17 +295,22 @@ class steerPredictor:
         if self.i == self.idx * 17:
             self.base = self.best
 
-        self.steer: int = self.calculateSteer()
-        if abs(self.steer) > 65536:
-            self.steer = 65536 * self.direction
-
-        # Return good steer
+        self.calculateSteer()
         if self.isNewSteer() or self.isLastIteration():
             return self.steer
 
-        # Otherwise continue iterating
         self.i += 1
         return self.iter()
+
+    def calculateSteer(self):
+        self.steer = self.base + (
+            self.interval[self.idx] * (self.offset[self.idx] - self.i) * self.direction
+        )
+        if self.steer > 65536:
+            self.steer = 65536
+        
+        elif self.steer < -65536:
+            self.steer = -65536
 
     def changeDirection(self):
         self.direction *= -1
