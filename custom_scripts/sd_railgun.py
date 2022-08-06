@@ -21,32 +21,12 @@ class MainClient(Client):
         self.minLvxDirt = lambda speed: 0.25 + (speed > 235) * 0.001 * (306 - speed)
         self.minLvx = self.minLvxRoad
 
-        self.ordered_input_ops = (self.getFirstInput, self.getInputTimeState, self.s4dExec, self.s4dReset, self.atInputTime)
+        self.ordered_input_ops = (self.getFirstInput, self.getInputTimeState, self.s4dExec, self.s4dReset)
         self.ordered_step_ops = (self.setupNextStep, self.toggleCountersteer, self.wiggleExec)
 
         # set time notation function pointer
         generateMS = lambda tick: self.time_from + tick * 10
         self.generateCmdTime = self.generateDecimal if USE_DECIMAL_NOTATION else generateMS
-
-        # Global to Local velocity vector transpose
-        self.stateToLocalVelocity = lambda state, idx: np.sum(
-            [state.velocity[i] * state.rotation_matrix[i][idx] for i in range(3)]
-        )
-
-        # Evaluation velocity calculation
-        notAllWheelsOnGround = lambda state: not all(
-            [
-                unpack('i', state.simulation_wheels[i+292:i+296])[0]
-                for i in [(SIMULATION_WHEELS_SIZE // 4) * i for i in range(4)]
-            ]
-        )
-        self.getEvalVelocity = lambda state: np.linalg.norm(
-            (
-                self.stateToLocalVelocity(state, 0),
-                self.stateToLocalVelocity(state, 1) * notAllWheelsOnGround(state),
-                self.stateToLocalVelocity(state, 2)
-            )
-        )
 
     def on_registered(self, iface: TMInterface):
         print(f'[Railgun] Registered to {iface.server_name}')
@@ -127,7 +107,7 @@ class MainClient(Client):
         self.seek_reset_time = -1
         self.wiggle_timer = self.max_wiggle_timer
 
-        self.input_ops = {self.getFirstInput, self.getInputTimeState, self.atInputTime}
+        self.input_ops = {self.getFirstInput, self.getInputTimeState}
         if self.s4d:
             self.input_ops.add(self.s4dExec)
 
@@ -141,11 +121,11 @@ class MainClient(Client):
 
         elif _time == self.input_time + self.seek:
             self.railgun + (self.getEvalVelocity(iface.get_simulation_state()), self.steer)
-            iface.rewind_to_state(self.step)
-            return
+            self.nextStep(iface) if self.railgun.is_last_iteration else self.rewind(iface)
 
         elif _time == self.input_time:
-            [fn(iface) for fn in self.ordered_input_ops if fn in self.input_ops and not self.rewinding]
+            [fn(iface) for fn in self.ordered_input_ops if fn in self.input_ops]
+            self.steer = self.railgun.getSteer()
 
         elif _time == self.input_time - 10:
             self.step = iface.get_simulation_state()
@@ -165,6 +145,29 @@ class MainClient(Client):
     def on_deregistered(self, iface: TMInterface):
         print('[Railgun] Attempting to back up most recent inputs to sd_railgun.txt...')
         self.writeSteerToFile()
+
+    # Velocity transpose
+    def stateToLocalVelocity(self, state, idx):
+        return np.sum([state.velocity[i] * state.rotation_matrix[i][idx] for i in range(3)])
+
+    def getEvalVelocity(self, state):
+        notAllWheelsOnGround = not all(
+            [
+                unpack('i', state.simulation_wheels[i+292:i+296])[0]
+                for i in [(SIMULATION_WHEELS_SIZE // 4) * i for i in range(4)]
+            ]
+        )
+        return np.linalg.norm(
+            (
+                self.stateToLocalVelocity(state, 0),
+                self.stateToLocalVelocity(state, 1) * notAllWheelsOnGround,
+                self.stateToLocalVelocity(state, 2)
+            )
+        )
+
+    def rewind(self, iface: TMInterface):
+        iface.rewind_to_state(self.step)
+        self.rewinding = True
 
     # Input time event handling functions
     def getFirstInput(self, iface: TMInterface):
@@ -192,28 +195,24 @@ class MainClient(Client):
             self.input_ops.add(self.s4dReset)
             self.seek = 130
             self.seek_reset_time = self.input_time + 60
+            self.railgun.stageReset()
 
     def s4dReset(self, iface: TMInterface):
         if self.input_time == self.seek_reset_time:
             self.input_ops.remove(self.s4dReset)
             self.seek = self.default_seek
 
-    def atInputTime(self, iface: TMInterface):
-        self.steer: int = self.railgun.iter()
-        if self.railgun.isLastIteration():
-            self.nextStep(iface)
-
     # Next iteration handling functions
     def nextStep(self, iface: TMInterface):
-        self.rewinding = True
         if self.railgun.isCountersteering() and not self.countersteered:
             self.toggleCountersteer(iface)
 
         else:
+            self.railgun.getBest()
             [fn(iface) for fn in self.ordered_step_ops if fn in self.step_ops]
 
-        self.railgun.reset()
-        iface.rewind_to_state(self.step)
+        self.railgun.stageReset()
+        self.rewind(iface)
 
     def setupNextStep(self, iface: TMInterface):
         iface.set_input_state(sim_clear_buffer=False, steer=self.railgun.best)
@@ -269,54 +268,57 @@ class MainClient(Client):
 
 class steerPredictor:
     def __init__(self, direction: int):
-        self.direction: int = direction
-        self.i: int = 0
-        self.max_i: int = 85
-        self.vdata: list[tuple] = [(0, 0)] * self.max_i
-        self.interval: tuple[int] = (4096, 512, 64, 8, 1, 0)
-        self.offset: tuple[int] = (16, 25, 42, 59, 76, 85)
-
-        self.isLastIteration = lambda: self.i == self.max_i
-        self.isNewSteer = lambda: self.steer not in [v[1] for v in self.vdata if v != (0, 0)]
-        self.isCountersteering = lambda: self.best * self.direction < 0
-
-    def reset(self):
-        self.i: int = 0
-        self.vdata: list[tuple] = [(0, 0)] * self.max_i
+        self.direction = direction
+        self.staging = [(i, 2 ** i, 2 ** i * 7 // 2 if i else 16) for i in (13, 11, 9, 7, 5, 0)]
+        self.prev_stage = lambda: self.staging[self.stage - 1][0]
+        self.step = lambda: self.staging[self.stage][1]
+        self.offset = lambda: self.staging[self.stage][2]
+        self.stageReset()
 
     def __add__(self, pair: tuple):
-        self.vdata[self.i] = pair
-        self.i += 1
+        self.v_data[self.idx] = pair
+        self.idx += 1
+        if self.idx == len(self.v_data):
+            if self.prev_stage():
+                self.stageSetup()
 
-    def iter(self):
-        self.vdata.sort(reverse=True)
-        self.best: int = self.vdata[0][1]
-        self.idx: int = self.i // 17
-        if self.i == self.idx * 17:
-            self.base = self.best
+            else:
+                self.is_last_iteration = True
 
-        self.calculateSteer()
-        if self.isNewSteer() or self.isLastIteration():
-            return self.steer
+    def stageReset(self):
+        self.is_last_iteration = False
+        self.stage = 0
+        self.v_data = [(0, 0x9000 * self.direction)] * 8
+        self.stageSetup()
 
-        self.i += 1
-        return self.iter()
+    def stageSetup(self):
+        self.getBest()
 
-    def calculateSteer(self):
-        self.steer = self.base + (
-            self.interval[self.idx] * (self.offset[self.idx] - self.i) * self.direction
-        )
-        if self.steer > 65536:
-            self.steer = 65536
-        
-        elif self.steer < -65536:
-            self.steer = -65536
+        offset = self.offset()
+        start, stop = self.best - offset, self.best + offset
+
+        self.steer = {i for i in range(start, stop + 1, self.step()) if abs(i) <= 0x10000}
+        self.steer.discard(self.best)
+        self.v_data = [self.v_data[0]] + [(0, 0)] * len(self.steer)
+
+        self.idx = 1
+        self.stage += 1
+
+    def getBest(self):
+        self.v_data.sort(reverse=True)
+        self.best = self.v_data[0][1]
+
+    def getSteer(self):
+        return self.steer.pop()
+
+    def isCountersteering(self):
+        return self.best * self.direction < 0
 
     def changeDirection(self):
         self.direction *= -1
 
     def fullSteer(self):
-        self.best = 65536 * self.direction
+        self.v_data = [(0, 0x10000 * self.direction)] * 8
 
 if __name__ == '__main__':
     try:
