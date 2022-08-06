@@ -22,7 +22,7 @@ class MainClient(Client):
         self.minLvx = self.minLvxRoad
 
         self.ordered_input_ops = (self.getFirstInput, self.getInputTimeState, self.s4dExec, self.s4dReset)
-        self.ordered_step_ops = (self.setupNextStep, self.toggleCountersteer, self.wiggleExec)
+        self.ordered_step_ops = (self.toggleCountersteer, self.wiggleExec)
 
         # set time notation function pointer
         generateMS = lambda tick: self.time_from + tick * 10
@@ -111,7 +111,7 @@ class MainClient(Client):
         if self.s4d:
             self.input_ops.add(self.s4dExec)
 
-        self.step_ops = {self.setupNextStep}
+        self.step_ops = set()
         if self.wiggle:
             self.step_ops.add(self.wiggleExec)
 
@@ -209,7 +209,8 @@ class MainClient(Client):
 
         else:
             self.railgun.getBest()
-            [fn(iface) for fn in self.ordered_step_ops if fn in self.step_ops]
+            self.setupNextStep(iface)
+            [fn() for fn in self.ordered_step_ops if fn in self.step_ops]
 
         self.railgun.stageReset()
         self.rewind(iface)
@@ -221,14 +222,14 @@ class MainClient(Client):
         self.input_ops.add(self.getInputTimeState)
         self.input_time += 10
 
-    def toggleCountersteer(self, iface: TMInterface):
+    def toggleCountersteer(self):
         self.railgun.changeDirection()
         self.countersteered = not self.countersteered
         self.step_ops.discard(self.toggleCountersteer)
         if self.countersteered:
             self.step_ops.add(self.toggleCountersteer)
 
-    def wiggleExec(self, iface: TMInterface):
+    def wiggleExec(self):
         self.wiggle_timer -= 10
         if self.isDecelerating:
             self.wiggle_timer = self.max_wiggle_timer
