@@ -12,7 +12,6 @@ USE_DECIMAL_NOTATION = False # set to True for decimal notation, False for milli
 class MainClient(Client):
     def __init__(self):
         # Default config
-        super().__init__()
         self.time_from, self.time_to = -1, -1
         self.default_seek, self.max_wiggle_timer = 120, 300
         self.s4d, self.wiggle = False, False
@@ -146,8 +145,8 @@ class MainClient(Client):
         print('[Railgun] Attempting to back up most recent inputs to sd_railgun.txt...')
         self.writeSteerToFile()
 
-    # Velocity transpose
-    def stateToLocalVelocity(self, state, idx):
+    # General purpose
+    def stateToLocalVelocity(self, state, idx: int):
         return np.sum([state.velocity[i] * state.rotation_matrix[i][idx] for i in range(3)])
 
     def getEvalVelocity(self, state):
@@ -202,7 +201,7 @@ class MainClient(Client):
             self.input_ops.remove(self.s4dReset)
             self.seek = self.default_seek
 
-    # Next iteration handling functions
+    # Time step handling functions
     def nextStep(self, iface: TMInterface):
         if self.railgun.isCountersteering() and not self.countersteered:
             self.toggleCountersteer()
@@ -267,27 +266,24 @@ class MainClient(Client):
 
         return h + m + s + c
 
+# Helper class that determines steer
 class steerPredictor:
     def __init__(self, direction: int):
         self.direction = direction
         self.staging = [(i, 2 ** i, (2 ** i * 7 // 2) if i else 16) for i in (13, 11, 9, 7, 5, 0)]
-        self.prev_stage = lambda: self.staging[self.stage - 1][0]
-        self.step = lambda: self.staging[self.stage][1]
-        self.offset = lambda: self.staging[self.stage][2]
         self.stageReset()
 
     def __add__(self, pair: tuple):
-        idx = len(self.v_data) - ((len_steer := len(self.steer)) + 1)
-        self.v_data[idx] = pair
+        len_steer = len(self.steer)
+        self.v_data[len(self.v_data) - len_steer - 1] = pair
         if not len_steer:
-            if self.prev_stage():
+            if self.staging[self.stage - 1][0]:
                 self.stageSetup()
                 return
 
             self.setBest()
-            steer_sorted = sorted(steer_values := [s[1] for s in self.v_data])
-            offset = (self.best == steer_sorted[0]) - (self.best == steer_sorted[-1])
-            if offset:
+            steer_values = [s[1] for s in self.v_data]
+            if offset := self.isSteerOnEdge(steer_values):
                 s0, s1 = self.offsetToBest(offset)
                 self.steer.add(s0)
                 self.v_data = [self.v_data[0], self.v_data[steer_values.index(s1)], (0, 0)]
@@ -304,19 +300,25 @@ class steerPredictor:
     def stageSetup(self):
         self.setBest()
 
-        start, stop = self.offsetToBest(self.offset())
-        self.steer = {i for i in range(start, stop + 1, self.step()) if abs(i) <= 0x10000}
+        step, offset = self.staging[self.stage][1:]
+        start, stop = self.offsetToBest(offset)
+        self.steer = {i for i in range(start, stop + 1, step) if abs(i) <= 0x10000}
         self.steer.discard(self.best)
         self.v_data = [self.v_data[0]] + [(0, 0)] * len(self.steer)
 
         self.stage += 1
 
+    # Helper functions
     def setBest(self):
         self.v_data.sort(reverse=True)
         self.best: int = self.v_data[0][1]
 
     def offsetToBest(self, offset: int):
         return self.best - offset, self.best + offset
+
+    def isSteerOnEdge(self, steer: list[int]):
+        steer.sort()
+        return (self.best == steer[0]) - (self.best == steer[-1])
 
     def getSteer(self):
         return self.steer.pop()
