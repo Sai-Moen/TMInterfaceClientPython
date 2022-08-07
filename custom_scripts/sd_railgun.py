@@ -205,7 +205,7 @@ class MainClient(Client):
     # Next iteration handling functions
     def nextStep(self, iface: TMInterface):
         if self.railgun.isCountersteering() and not self.countersteered:
-            self.toggleCountersteer(iface)
+            self.toggleCountersteer()
 
         else:
             self.railgun.getBest()
