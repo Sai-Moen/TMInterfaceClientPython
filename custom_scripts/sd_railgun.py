@@ -208,7 +208,6 @@ class MainClient(Client):
             self.toggleCountersteer()
 
         else:
-            self.railgun.getBest()
             self.setupNextStep(iface)
             [fn() for fn in self.ordered_step_ops if fn in self.step_ops]
 
@@ -216,6 +215,7 @@ class MainClient(Client):
         self.rewind(iface)
 
     def setupNextStep(self, iface: TMInterface):
+        self.railgun.setBest()
         iface.set_input_state(sim_clear_buffer=False, steer=self.railgun.best)
         self.inputs.append(self.railgun.best)
         print(f'{self.input_time} steer {self.railgun.best} -> {self.velocity * 3.6} km/h')
@@ -270,21 +270,30 @@ class MainClient(Client):
 class steerPredictor:
     def __init__(self, direction: int):
         self.direction = direction
-        self.staging = [(i, 2 ** i, 2 ** i * 7 // 2 if i else 16) for i in (13, 11, 9, 7, 5, 0)]
+        self.staging = [(i, 2 ** i, (2 ** i * 7 // 2) if i else 16) for i in (13, 11, 9, 7, 5, 0)]
         self.prev_stage = lambda: self.staging[self.stage - 1][0]
         self.step = lambda: self.staging[self.stage][1]
         self.offset = lambda: self.staging[self.stage][2]
         self.stageReset()
 
     def __add__(self, pair: tuple):
-        self.v_data[self.idx] = pair
-        self.idx += 1
-        if self.idx == len(self.v_data):
+        idx = len(self.v_data) - ((len_steer := len(self.steer)) + 1)
+        self.v_data[idx] = pair
+        if not len_steer:
             if self.prev_stage():
                 self.stageSetup()
+                return
 
-            else:
-                self.is_last_iteration = True
+            self.setBest()
+            steer_sorted = sorted(steer_values := [s[1] for s in self.v_data])
+            offset = (self.best == steer_sorted[0]) - (self.best == steer_sorted[-1])
+            if offset:
+                s0, s1 = self.offsetToBest(offset)
+                self.steer.add(s0)
+                self.v_data = [self.v_data[0], self.v_data[steer_values.index(s1)], (0, 0)]
+                return
+
+            self.is_last_iteration = True
 
     def stageReset(self):
         self.is_last_iteration = False
@@ -293,21 +302,21 @@ class steerPredictor:
         self.stageSetup()
 
     def stageSetup(self):
-        self.getBest()
+        self.setBest()
 
-        offset = self.offset()
-        start, stop = self.best - offset, self.best + offset
-
+        start, stop = self.offsetToBest(self.offset())
         self.steer = {i for i in range(start, stop + 1, self.step()) if abs(i) <= 0x10000}
         self.steer.discard(self.best)
         self.v_data = [self.v_data[0]] + [(0, 0)] * len(self.steer)
 
-        self.idx = 1
         self.stage += 1
 
-    def getBest(self):
+    def setBest(self):
         self.v_data.sort(reverse=True)
-        self.best = self.v_data[0][1]
+        self.best: int = self.v_data[0][1]
+
+    def offsetToBest(self, offset: int):
+        return self.best - offset, self.best + offset
 
     def getSteer(self):
         return self.steer.pop()
