@@ -9,16 +9,13 @@ from tminterface.constants import SIMULATION_WHEELS_SIZE
 
 USE_DECIMAL_NOTATION = False # set to True for decimal notation, False for milliseconds
 
-class MainClient(Client):
+class Railgun(Client):
     def __init__(self):
         # Default config
-        self.time_from, self.time_to = -1, -1
-        self.default_seek, self.max_wiggle_timer = 120, 300
         self.s4d, self.wiggle = False, False
 
         self.minLvxRoad = lambda speed: 4 - 0.5 * ((speed > 401) * ((speed - 401) / 100))
         self.minLvxDirt = lambda speed: 0.25 + (speed > 235) * 0.001 * (306 - speed)
-        self.minLvx = self.minLvxRoad
 
         self.ordered_input_ops = (self.getFirstInput, self.getInputTimeState, self.s4dExec, self.s4dReset)
         self.ordered_step_ops = (self.toggleCountersteer, self.wiggleExec)
@@ -43,7 +40,7 @@ class MainClient(Client):
                 iface.log('[Railgun] Timerange not set, Usage: time_from-time_to sd <direction>', 'warning')
 
             elif len(args) == 1 and args[0] in ('left', 'right'):
-                self.direction = int(args[0] == 'right') - int(args[0] == 'left')
+                self._direction = int(args[0] == 'right') - int(args[0] == 'left')
                 self.time_from, self.time_to = time_from, time_to
                 iface.log('[Railgun] sd settings changed successfully!', 'success')
 
@@ -84,27 +81,24 @@ class MainClient(Client):
                 iface.log('[Railgun] Usage: sdmode <normal, s4d, s4dirt, wiggle or wiggledirt>', 'warning')
 
     def on_simulation_begin(self, iface: TMInterface):
-        # Close because otherwise we get an exception and close anyway
-        if self.time_to == -1 or self.time_from == -1:
-            iface.log('[Railgun] Usage: time_from-time_to sd', 'error')
-            iface.log('[Railgun] (closing to prevent exception): You forgot to set a time range', 'error')
+        try:
+            print(f'[Railgun] Simulating from {self.time_from} to {self.time_to} trying to sd {self._direction}')
+        except:
+            iface.log('[Railgun] Usage: time_from-time_to sd <direction>.', 'error')
             iface.close()
             print('[Railgun] Closed due to exception, use the sd command to change timerange and direction.')
             return
 
-        # Required to properly change inputs
-        self.time_limit = self.time_to + self.default_seek + 10
         iface.remove_state_validation()
-        iface.set_simulation_time_limit(self.time_limit - 10010) # temporary manual offset
 
-        # Variable config
         self.input_time = self.time_from
-        self.countersteered, self.rewinding = False, False
-        self.railgun = steerPredictor(self.direction)
-        
-        self.seek = self.default_seek
-        self.seek_reset_time = -1
-        self.wiggle_timer = self.max_wiggle_timer
+        self.rewinding = False
+        self.direction = self._direction
+        self.countersteered = False
+
+        self.resetSeek()
+        self.resetWiggleTimer()
+        self.stageReset()
 
         self.input_ops = {self.getFirstInput, self.getInputTimeState}
         if self.s4d:
@@ -114,17 +108,20 @@ class MainClient(Client):
         if self.wiggle:
             self.step_ops.add(self.wiggleExec)
 
+        self.time_limit = self.time_to + self.seek + 10
+        iface.set_simulation_time_limit(self.time_limit - 10010) # temporary manual offset
+
     def on_simulation_step(self, iface: TMInterface, _time: int):
         if _time >= self.time_limit:
             return
 
         elif _time == self.input_time + self.seek:
-            self.railgun + (self.getEvalVelocity(iface.get_simulation_state()), self.steer)
-            self.nextStep(iface) if self.railgun.is_last_iteration else self.rewind(iface)
+            self.addVelocityData((self.getEvalVelocity(iface.get_simulation_state()), self.steer))
+            self.nextStep(iface) if self.is_last_iteration else self.rewind(iface)
 
         elif _time == self.input_time:
             [fn(iface) for fn in self.ordered_input_ops if fn in self.input_ops]
-            self.steer = self.railgun.getSteer()
+            self.steer = self.steering.pop()
 
         elif _time == self.input_time - 10:
             self.step = iface.get_simulation_state()
@@ -145,21 +142,72 @@ class MainClient(Client):
         print('[Railgun] Attempting to back up most recent inputs to sd_railgun.txt...')
         self.writeSteerToFile()
 
+    # Steering calculation
+    def addVelocityData(self, pair: tuple):
+        len_steering = len(self.steering)
+        self.v_data[len(self.v_data) - len_steering - 1] = pair
+        if not len_steering:
+            if self.staging[self.stage - 1][0]:
+                return self.stageSetup()
+
+            def offsetIfEdgeValue(steer: list[int]):
+                self.setBest()
+                steer.sort()
+                return (self.best == steer[0]) - (self.best == steer[-1])
+
+            if offset := offsetIfEdgeValue(steer_values := [s[1] for s in self.v_data]):
+                s0, s1 = self.offsetToBest(offset)
+                self.steering.add(s0)
+                self.v_data = [self.v_data[0], self.v_data[steer_values.index(s1)], (0, 0)]
+                return
+
+            self.is_last_iteration = True
+
+    staging = tuple([(bool(i), 2 ** i, (2 ** i * 7 // 2) if i else 16) for i in (13, 11, 9, 7, 5, 0)])
+    def stageReset(self):
+        self.is_last_iteration = False
+        self.stage = 0
+        self.resetVelocityData(0x9000)
+        self.stageSetup()
+
+    def stageSetup(self):
+        self.setBest()
+
+        step, offset = self.staging[self.stage][1:]
+        start, stop = self.offsetToBest(offset)
+        self.steering = {i for i in range(start, stop + 1, step) if abs(i) <= 0x10000}
+        self.steering.discard(self.best)
+        self.v_data = [self.v_data[0]] + [(0, 0)] * len(self.steering)
+
+        self.stage += 1
+
+    def resetVelocityData(self, steer: int):
+        self.v_data = [(0, steer * self.direction)] * 9
+
+    def setBest(self):
+        self.v_data.sort(reverse=True)
+        self.best: int = self.v_data[0][1]
+
+    def offsetToBest(self, offset: int):
+        return self.best - offset, self.best + offset
+
     # General purpose
     def stateToLocalVelocity(self, state, idx: int):
         return np.sum([state.velocity[i] * state.rotation_matrix[i][idx] for i in range(3)])
 
+    wheels_struct = tuple([(SIMULATION_WHEELS_SIZE // 4) * i for i in range(4)])
     def getEvalVelocity(self, state):
-        notAllWheelsOnGround = not all(
-            [
-                unpack('i', state.simulation_wheels[i+292:i+296])[0]
-                for i in [(SIMULATION_WHEELS_SIZE // 4) * i for i in range(4)]
-            ]
-        )
+        def notAllWheelsOnGround():
+            return not all(
+                [
+                    unpack('i', state.simulation_wheels[i+292:i+296])[0]
+                    for i in self.wheels_struct
+                ]
+            )
         return np.linalg.norm(
             (
                 self.stateToLocalVelocity(state, 0),
-                self.stateToLocalVelocity(state, 1) * notAllWheelsOnGround,
+                self.stateToLocalVelocity(state, 1) * notAllWheelsOnGround(),
                 self.stateToLocalVelocity(state, 2)
             )
         )
@@ -167,6 +215,12 @@ class MainClient(Client):
     def rewind(self, iface: TMInterface):
         iface.rewind_to_state(self.step)
         self.rewinding = True
+
+    def resetSeek(self):
+        self.seek = 120
+
+    def resetWiggleTimer(self):
+        self.wiggle_timer = 300
 
     # Input time event handling functions
     def getFirstInput(self, iface: TMInterface):
@@ -177,16 +231,15 @@ class MainClient(Client):
         self.input_ops.remove(self.getInputTimeState)
         state = iface.get_simulation_state()
         self.velocity = np.linalg.norm(state.velocity)
-
-        # Set conditions
-        self.isDecelerating = self.velocity < np.linalg.norm(self.step.velocity)
-        lvx = self.stateToLocalVelocity(state, 0)
-        min_lvx = self.minLvx(self.velocity * 3.6)
-        self.isUndersteering = lambda: lvx * self.railgun.direction < min_lvx
+        # Re-use state
+        if self.s4d:
+            lvx = self.stateToLocalVelocity(state, 0)
+            min_lvx = self.minLvx(self.velocity * 3.6)
+            self.isUndersteering = lambda: lvx * self.direction < min_lvx
 
     def s4dExec(self, iface: TMInterface):
         if self.isUndersteering():
-            self.railgun.fullSteer()
+            self.resetVelocityData(0x10000)
             self.nextStep(iface)
 
         else:
@@ -194,50 +247,53 @@ class MainClient(Client):
             self.input_ops.add(self.s4dReset)
             self.seek = 130
             self.seek_reset_time = self.input_time + 60
-            self.railgun.stageReset()
+            self.stageReset()
 
     def s4dReset(self, iface: TMInterface):
         if self.input_time == self.seek_reset_time:
             self.input_ops.remove(self.s4dReset)
-            self.seek = self.default_seek
+            self.resetSeek()
 
     # Time step handling functions
     def nextStep(self, iface: TMInterface):
-        if self.railgun.isCountersteering() and not self.countersteered:
+        if self.best * self.direction < 0 and not self.countersteered:
             self.toggleCountersteer()
 
         else:
             self.setupNextStep(iface)
             [fn() for fn in self.ordered_step_ops if fn in self.step_ops]
 
-        self.railgun.stageReset()
+        self.stageReset()
         self.rewind(iface)
 
     def setupNextStep(self, iface: TMInterface):
-        self.railgun.setBest()
-        iface.set_input_state(sim_clear_buffer=False, steer=self.railgun.best)
-        self.inputs.append(self.railgun.best)
-        print(f'{self.input_time} steer {self.railgun.best} -> {self.velocity * 3.6} km/h')
+        self.setBest()
+        iface.set_input_state(sim_clear_buffer=False, steer=self.best)
+        self.inputs.append(self.best)
+        print(f'{self.input_time} steer {self.best} -> {self.velocity * 3.6} km/h')
         self.input_ops.add(self.getInputTimeState)
         self.input_time += 10
 
     def toggleCountersteer(self):
-        self.railgun.changeDirection()
-        self.countersteered = not self.countersteered
+        self.changeDirection()
+        self.countersteered ^= True
         self.step_ops.discard(self.toggleCountersteer)
         if self.countersteered:
             self.step_ops.add(self.toggleCountersteer)
 
     def wiggleExec(self):
         self.wiggle_timer -= 10
-        if self.isDecelerating:
-            self.wiggle_timer = self.max_wiggle_timer
+        if self.velocity < np.linalg.norm(self.step.velocity):
+            self.resetWiggleTimer()
 
         elif not self.wiggle_timer:
-            self.wiggle_timer = self.max_wiggle_timer
-            self.railgun.changeDirection()
+            self.resetWiggleTimer()
+            self.changeDirection()
             if self.s4d:
                 self.input_ops.add(self.s4dExec)
+
+    def changeDirection(self):
+        self.direction *= -1
 
     # Writing string of steering commands to file
     def writeSteerToFile(self):
@@ -266,72 +322,6 @@ class MainClient(Client):
 
         return h + m + s + c
 
-# Helper class that determines steer
-class steerPredictor:
-    def __init__(self, direction: int):
-        self.direction = direction
-        self.staging = [(i, 2 ** i, (2 ** i * 7 // 2) if i else 16) for i in (13, 11, 9, 7, 5, 0)]
-        self.stageReset()
-
-    def __add__(self, pair: tuple):
-        len_steer = len(self.steer)
-        self.v_data[len(self.v_data) - len_steer - 1] = pair
-        if not len_steer:
-            if self.staging[self.stage - 1][0]:
-                self.stageSetup()
-                return
-
-            self.setBest()
-            steer_values = [s[1] for s in self.v_data]
-            if offset := self.isSteerOnEdge(steer_values):
-                s0, s1 = self.offsetToBest(offset)
-                self.steer.add(s0)
-                self.v_data = [self.v_data[0], self.v_data[steer_values.index(s1)], (0, 0)]
-                return
-
-            self.is_last_iteration = True
-
-    def stageReset(self):
-        self.is_last_iteration = False
-        self.stage = 0
-        self.v_data = [(0, 0x9000 * self.direction)] * 8
-        self.stageSetup()
-
-    def stageSetup(self):
-        self.setBest()
-
-        step, offset = self.staging[self.stage][1:]
-        start, stop = self.offsetToBest(offset)
-        self.steer = {i for i in range(start, stop + 1, step) if abs(i) <= 0x10000}
-        self.steer.discard(self.best)
-        self.v_data = [self.v_data[0]] + [(0, 0)] * len(self.steer)
-
-        self.stage += 1
-
-    # Helper functions
-    def setBest(self):
-        self.v_data.sort(reverse=True)
-        self.best: int = self.v_data[0][1]
-
-    def offsetToBest(self, offset: int):
-        return self.best - offset, self.best + offset
-
-    def isSteerOnEdge(self, steer: list[int]):
-        steer.sort()
-        return (self.best == steer[0]) - (self.best == steer[-1])
-
-    def getSteer(self):
-        return self.steer.pop()
-
-    def isCountersteering(self):
-        return self.best * self.direction < 0
-
-    def changeDirection(self):
-        self.direction *= -1
-
-    def fullSteer(self):
-        self.v_data = [(0, 0x10000 * self.direction)] * 8
-
 if __name__ == '__main__':
     try:
         server_id = int(
@@ -342,5 +332,5 @@ if __name__ == '__main__':
         server_name = 'TMInterface0'
     finally:
         print(f'[Railgun] Connecting to {server_name}...')
-        run_client(MainClient(), server_name)
+        run_client(Railgun(), server_name)
         print(f'[Railgun] Deregistered from {server_name}')
