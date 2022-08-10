@@ -144,9 +144,9 @@ class Railgun(Client):
             if self.staging[self.stage - 1][0]: return self.stageSetup()
 
             self.setBest()
-            steer_values = [s[1] for s in self.v_data]
+            speeds, steer_values = [s[0] for s in self.v_data], [s[1] for s in self.v_data]
             offset = (self.best == min(steer_values)) - (self.best == max(steer_values))
-            if offset * (abs(self.best) != 0x10000):
+            if offset and min(speeds) != max(speeds) and abs(self.best) < 0xfff1:
                 s0, s1 = self.offsetToBest(offset)
                 self.v_data = [self.v_data[0], self.v_data[steer_values.index(s1)], (0, 0)]
                 return self.steering.add(s0)
