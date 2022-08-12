@@ -3,6 +3,7 @@
 import numpy as np
 from tminterface.client import Client, run_client
 from tminterface.interface import TMInterface
+from tminterface.structs import SimStateData
 
 from struct import unpack
 from tminterface.constants import SIMULATION_WHEELS_SIZE
@@ -181,15 +182,15 @@ class Railgun(Client):
         return self.best - offset, self.best + offset
 
     # General purpose
-    def stateToLocalVelocity(self, state, idx: int):
+    def stateToLocalVelocity(self, state: SimStateData, idx: int):
         return np.sum([state.velocity[i] * state.rotation_matrix[i][idx] for i in range(3)])
 
-    wheels_struct = tuple([(SIMULATION_WHEELS_SIZE // 4) * i for i in range(4)])
-    def getEvalVelocity(self, state):
+    wheels = tuple([(SIMULATION_WHEELS_SIZE // 4) * i for i in range(4)])
+    def getEvalVelocity(self, state: SimStateData):
         not_all_wheels_on_ground = not all(
             [
                 unpack('i', state.simulation_wheels[i+292:i+296])[0]
-                for i in self.wheels_struct
+                for i in self.wheels
             ]
         )
         return np.linalg.norm(
