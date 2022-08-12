@@ -28,7 +28,7 @@ An sd is never defined in the code. However, after just 10 ticks (100ms), there 
 The sdmode command allows the user to select different modes than 'normal' mode. These modes are s4d, s4dirt, wiggle and wiggledirt. The wiggle mode does sd's in an alternating direction and switches the direction every .3 seconds, unless a gear is taking place. It works best on grass because dirt steering is more difficult to get naturally. The wiggledirt mode is the same except it works better on dirt by doing s4d's so it doesn't lose the sd. s4d mode full steers at the start of the script as long as a certain sideways speed goal has not been met (the goal is based on experimentation done on road). After that the main algorithm takes over. s4dirt is the same, but for dirt slides which often don't trigger automatically. Sd's on grass however do work fine without assistance through an s4d mode. Be wary that only normal mode and wiggle mode (not wiggledirt) account for gear shifts.
 
 ###### New algorithm and why it's better than the old algorithm:
-The script starts out by taking 17 steering value points from 0 to 65536 (multiplied by the sd direction; -1 for left and 1 for right), similarly to the old algorithm. 
+The script starts out by taking 8 steering value points from 8192 to 65536 (multiplied by the sd direction; -1 for left and 1 for right), similarly to the old algorithm, but with more efficient steps of 8192. 
 Unlike the old algorithm however, it just keeps taking points around the fastest point of that stage, rather than trying to interpolate using the second best point. As it turns out, using the second best point is not very reliable.
 
 Let's say for instance that your best steering value so far is 32k, number 2 is 34k and number 3 is 30k. Oftentimes what would happen is that the predicted angle is higher than 32k whereas actually 31999 would be faster than 32001. This would often randomly cause the algorithm to find steering values that correspond to a multiple of the interval being used for the starting points.
@@ -36,7 +36,9 @@ Let's say for instance that your best steering value so far is 32k, number 2 is 
 An example of this that could actually happen is it steering 32800, 32770, 32740, 32768, 32768, 32650; where 32768 is a multiple of 2048, the best interval for the old algorithm. My personal explanation for this is that at the sort of small steering differences, oversteering is faster, but if you zoom very far you will find that understeering slightly would be better, which is why it would take one of the starting points way too often if it interpolated the wrong way. Understanding that the second best steering value is never reliable, the new algorithm takes a range around the best point with decreasing interval for every 'stage'.
 
 The stages are pretty simple:
-After our initial 17 starting points with an interval of 4096, divide the interval by 8 and measure 8 points around either side of the best point from the previous stage. After going from 4096 -> 512 -> 64 -> 8 -> 1, we can be fairly certain that we have approximated the best steering value to near perfection.
+After our initial 8 starting points with an interval of 8192, divide the interval by 4 and measure 8 points around either side of the best point from the previous stage, so that the new points don't intersect with previously measured points. After doing this a couple times we end up with an interval of 1, in which case we take 32 points around the best point to try and figure out the best one. If the value ends up on the edge we test the neighbouring values (if not yet tested) until the best point stays the same.
+
+After going for several stages we can be fairly certain that we have approximated the best steering value to near perfection.
 This change of algorithm gives us a pretty big acceleration boost of 0.014 km/h per second of speeddrift on average.
 
 ###### Old algorithm (No longer in use in newer versions of the python script):
@@ -44,7 +46,7 @@ Firstly, 33 steering values in the given direction are tested, with an interval 
 After that there is an interpolation stage of 11 tests, where we take the best value up to this point and move it towards the second best value in decreasing steering differences. (2048 halved 11 times gives 1)
 After we only changed by 1 unit, pick the best value and display it. (And save it unless it is the same as the tick before)
 
-p.s.
+##### p.s.
 The reason I named it railgun is because visualizing the code running through the inputs made me think of how a railgun gradually propels its projectile (in this case the stadium car), though I might just have too much imagination.
 
 ## Wallhugger
