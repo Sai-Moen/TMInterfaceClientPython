@@ -39,59 +39,45 @@ class Railgun(Client):
         if command == 'sd':
             if time_to == -1 or time_from == -1:
                 iface.log('[Railgun] Timerange not set, Usage: time_from-time_to sd <direction>', 'warning')
-
             elif len(args) == 1 and args[0] in ('left', 'right'):
                 self._direction = int(args[0] == 'right') - int(args[0] == 'left')
                 self.time_from, self.time_to = time_from, time_to
                 iface.log('[Railgun] sd settings changed successfully!', 'success')
-
             else: iface.log('[Railgun] Usage: time_from-time_to sd <direction>', 'warning')
-
         elif command == 'sdmode':
             if len(args) == 0:
                 self.s4d, self.wiggle = False, False
                 iface.log('[Railgun] sdmode reset to normal', 'success')
-
             elif len(args) == 1:
                 if args[0] == 'normal':
                     self.s4d, self.wiggle = False, False
-
                 elif args[0] == 's4d':
                     self.s4d, self.wiggle = True, False
                     self.minLvx = self.minLvxRoad
-                
                 elif args[0] == 's4dirt':
                     self.s4d, self.wiggle = True, False
                     self.minLvx = self.minLvxDirt
-
                 elif args[0] == 'wiggle':
                     self.s4d, self.wiggle = False, True
-
                 elif args[0] == 'wiggledirt':
                     self.s4d, self.wiggle = True, True
                     self.minLvx = self.minLvxDirt
-
                 else:
                     iface.log('[Railgun] Invalid mode', 'warning')
                     return
-                
                 iface.log(f'[Railgun] sdmode set to {args[0]}', 'success')
-
             else: iface.log('[Railgun] Usage: sdmode <normal, s4d, s4dirt, wiggle or wiggledirt>', 'warning')
 
     def on_simulation_begin(self, iface: TMInterface):
-        try:
-            print(f'[Railgun] Simulating from {self.time_from} to {self.time_to} trying to sd {self._direction}')
+        try: print(f'[Railgun] Simulating from {self.time_from} to {self.time_to} trying to sd {self._direction}')
         except:
             iface.log('[Railgun] Usage: time_from-time_to sd <direction>.', 'error')
             iface.close()
             print('[Railgun] Closed due to exception, use the sd command to change timerange and direction.')
             return
-
         iface.remove_state_validation()
 
         self.input_time = self.time_from
-        self.rewinding = False
         self.direction = self._direction
         self.countersteered = False
 
@@ -110,23 +96,16 @@ class Railgun(Client):
 
     def on_simulation_step(self, iface: TMInterface, _time: int):
         if _time >= self.time_limit: return
-
         elif _time == self.input_time + self.seek:
             self.addVelocityData((self.getEvalVelocity(iface.get_simulation_state()), self.steer))
             return iface.rewind_to_state(self.step)
-
         elif _time == self.input_time:
-            [fn(iface) for fn in self.ordered_input_ops if fn in self.input_ops and not self.rewinding]
-            if self.rewinding:
-                self.rewinding = False
-                return
-
-            else: self.steer = self.steering.pop()
-
+            for fn in self.ordered_input_ops:
+                if fn in self.input_ops and fn(iface): return
+            self.steer = self.steering.pop()
         elif _time == self.input_time - 10:
             self.step = iface.get_simulation_state()
             return
-
         if _time >= self.input_time: iface.set_input_state(sim_clear_buffer=False, steer=self.steer)
 
     def on_simulation_end(self, iface: TMInterface, result: int):
@@ -143,7 +122,6 @@ class Railgun(Client):
         self.v_data[len(self.v_data) - len_steering - 1] = pair
         if not len_steering:
             if self.staging[self.stage - 1][0]: return self.stageSetup()
-
             self.setBest()
             speeds, steer_values = [s[0] for s in self.v_data], [s[1] for s in self.v_data]
             offset = (self.best == min(steer_values)) - (self.best == max(steer_values))
@@ -151,7 +129,6 @@ class Railgun(Client):
                 s0, s1 = self.offsetToBest(offset)
                 self.v_data = [self.v_data[0], self.v_data[steer_values.index(s1)], (0, 0)]
                 return self.steering.add(s0)
-
             self.input_ops.add(self.nextStep)
 
     staging = tuple([(bool(i), 2 ** i, (2 ** i * 7 // 2) if i else 16) for i in (13, 11, 9, 7, 5, 0)])
@@ -162,13 +139,11 @@ class Railgun(Client):
 
     def stageSetup(self):
         self.setBest()
-
         step, offset = self.staging[self.stage][1:]
         start, stop = self.offsetToBest(offset)
         self.steering = {i for i in range(start, stop + 1, step) if abs(i) <= 0x10000}
         self.steering.discard(self.best)
         self.v_data = [self.v_data[0]] + [(0, 0)] * len(self.steering)
-
         self.stage += 1
 
     def resetVelocityData(self, steer: int):
@@ -211,6 +186,7 @@ class Railgun(Client):
     def getFirstInput(self, iface: TMInterface):
         self.input_ops.remove(self.getFirstInput)
         self.inputs = [iface.get_simulation_state().input_steer]
+        return False
 
     def getInputTimeState(self, iface: TMInterface):
         self.input_ops.remove(self.getInputTimeState)
@@ -221,30 +197,29 @@ class Railgun(Client):
             lvx = self.stateToLocalVelocity(state, 0)
             min_lvx = self.minLvx(self.velocity * 3.6)
             self.isUndersteering = lambda: lvx * self.direction < min_lvx
+        return False
 
     def s4dExec(self, iface: TMInterface):
         if self.isUndersteering():
             self.resetVelocityData(0x10000)
-            self.nextStep(iface)
-
-        else:
-            self.input_ops.remove(self.s4dExec)
-            self.input_ops.add(self.s4dReset)
-            self.seek = 130
-            self.seek_reset_time = self.input_time + 60
-            self.stageReset()
+            return self.nextStep(iface)
+        self.input_ops.remove(self.s4dExec)
+        self.input_ops.add(self.s4dReset)
+        self.seek = 130
+        self.seek_reset_time = self.input_time + 60
+        self.stageReset()
+        return False
 
     def s4dReset(self, iface: TMInterface):
         if self.input_time == self.seek_reset_time:
             self.input_ops.remove(self.s4dReset)
             self.resetSeek()
+        return False
 
     # Time step handling functions
     def nextStep(self, iface: TMInterface):
         self.input_ops.discard(self.nextStep)
-        self.rewinding = True
         if self.best * self.direction < 0 and not self.countersteered: self.toggleCountersteer()
-
         else:
             self.setBest()
             iface.set_input_state(sim_clear_buffer=False, steer=self.best)
@@ -252,10 +227,11 @@ class Railgun(Client):
             print(f'{self.input_time} steer {self.best} -> {self.velocity * 3.6} km/h')
             self.input_ops.add(self.getInputTimeState)
             self.input_time += 10
-            [fn() for fn in self.ordered_step_ops if fn in self.step_ops]
-
+            for fn in self.ordered_step_ops:
+                if fn in self.step_ops: fn()
         self.stageReset()
         iface.rewind_to_state(self.step)
+        return True
 
     def toggleCountersteer(self):
         self.changeDirection()
@@ -266,7 +242,6 @@ class Railgun(Client):
     def wiggleExec(self):
         self.wiggle_timer -= 10
         if self.velocity < np.linalg.norm(self.step.velocity): self.resetWiggleTimer()
-
         elif not self.wiggle_timer:
             self.resetWiggleTimer()
             self.changeDirection()
@@ -286,10 +261,8 @@ class Railgun(Client):
                         enumerate(self.inputs[1:]) if t[1] != self.inputs[t[0]]
                     ]
                 )
-        except:
-            msg = 'failed.'
-        finally:
-            print(f'[Railgun] Input write {msg}')
+        except: msg = 'failed.'
+        finally: print(f'[Railgun] Input write {msg}')
 
     def generateDecimal(self, tick: int):
         t = self.time_from // 10 + tick
@@ -308,8 +281,7 @@ if __name__ == '__main__':
             input('[Railgun] Enter the TMInterface instance ID you would like to connect to...\n')
         )
         server_name = f'TMInterface{server_id * (server_id > 0)}'
-    except:
-        server_name = 'TMInterface0'
+    except: server_name = 'TMInterface0'
     finally:
         print(f'[Railgun] Connecting to {server_name}...')
         run_client(Railgun(), server_name)
