@@ -16,14 +16,13 @@ class Railgun(Client):
         self.s4d, self.wiggle = False, False
 
         self.minLvxRoad = lambda speed: 4 - 0.5 * ((speed > 401) * ((speed - 401) / 100))
-        self.minLvxDirt = lambda speed: 0.25 + (speed > 235) * 0.001 * (306 - speed)
+        self.minLvxDirt = lambda speed: 0.25 + (speed > 235) * (306 - speed) / 1000
 
         self.ordered_input_ops = (self.nextStep, self.getFirstInput, self.getInputTimeState, self.s4dExec, self.s4dReset)
         self.ordered_step_ops = (self.toggleCountersteer, self.wiggleExec)
 
-        # set time notation function pointer
-        generateMS = lambda tick: self.time_from + tick * 10
-        self.generateCmdTime = self.generateDecimal if USE_DECIMAL_NOTATION else generateMS
+        self.use_decimal = USE_DECIMAL_NOTATION
+        self.setGenCmdTime()
 
     def on_registered(self, iface: TMInterface):
         print(f'[Railgun] Registered to {iface.server_name}')
@@ -176,6 +175,9 @@ class Railgun(Client):
             )
         )
 
+    def setGenCmdTime(self):
+        self.generateCmdTime = self.generateDecimal if self.use_decimal else lambda tick: self.time_from + tick * 10
+
     def resetSeek(self):
         self.seek = 120
 
@@ -275,7 +277,7 @@ class Railgun(Client):
 
         return h + m + s + c
 
-if __name__ == '__main__':
+def main(client):
     try:
         server_id = int(
             input('[Railgun] Enter the TMInterface instance ID you would like to connect to...\n')
@@ -284,5 +286,8 @@ if __name__ == '__main__':
     except: server_name = 'TMInterface0'
     finally:
         print(f'[Railgun] Connecting to {server_name}...')
-        run_client(Railgun(), server_name)
+        run_client(client, server_name)
         print(f'[Railgun] Deregistered from {server_name}')
+
+if __name__ == '__main__':
+    main(Railgun())
