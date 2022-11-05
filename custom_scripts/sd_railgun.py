@@ -9,6 +9,7 @@ from struct import unpack
 from tminterface.constants import SIMULATION_WHEELS_SIZE
 
 USE_DECIMAL_NOTATION = False # set to True for decimal notation, False for milliseconds
+# You shouldn't need to change anything except for the previous line (if you want decimal notation of course)
 
 class Railgun(Client):
     """Main Client Implementation."""
@@ -21,7 +22,6 @@ class Railgun(Client):
             "use_decimal" : USE_DECIMAL_NOTATION
         }
         self.load_cfg()
-        self.set_time_format()
 
         self.input_time = -1
         self.schedule = []
@@ -30,14 +30,15 @@ class Railgun(Client):
         self.state = RgState()
 
     def load_cfg(self):
+        """
+        Loads all fields from the config dict into instance variables
+        to avoid live variable tampering (mostly for GUI compatibility).
+        """
         self.time_from: int = self.cfg["time_from"]
         self.time_to: int = self.cfg["time_to"]
         self.direction: int = self.cfg["direction"]
         self.sdmode: default = self.cfg["sdmode"]
-        self.use_decimal: bool = self.cfg["use_decimal"]
-
-    def set_time_format(self):
-        self.generateCmdTime = self.generateDecimal if self.use_decimal else lambda tick: self.time_from + tick * 10
+        self.generateCmdTime = self.generateDecimal if self.cfg["use_decimal"] else self.generateMs
 
     def on_registered(self, iface: TMInterface):
         print(f"[Railgun] Registered to {iface.server_name}")
@@ -83,7 +84,7 @@ class Railgun(Client):
                 self.cfg["sdmode"] = wiggledirt(self)
             else:
                 return "[Railgun] Invalid mode", "warning"
-            return f"[Railgun] sdmode set to {args[0]}", "success"
+            return f"[Railgun] sdmode set to {mode}", "success"
         return "[Railgun] Usage: sdmode <default, s4d, s4dirt, wiggle or wiggledirt>", "warning"
 
     def on_simulation_begin(self, iface: TMInterface):
@@ -120,7 +121,7 @@ class Railgun(Client):
                 self.nextStep(iface)
                 return
             self.steer = self.algo.getSteer()
-            if self.algo.stepflag:
+            if not self.algo.running:
                 self.nextStep(iface)
                 return
         elif _time == self.input_time - 10:
@@ -143,13 +144,14 @@ class Railgun(Client):
     def resetSeek(self):
         self.seek = 120
 
-    def getFirstInput(self):
-        self.inputs = [self.state.data.input_steer]
-
     def addToSchedule(self, fn):
         self.schedule.append(fn)
 
+    def setFirstInput(self):
+        self.inputs = [self.state.data.input_steer]
+
     def nextStep(self, iface: TMInterface):
+        """Re-do the current tick while countersteering or go to the next tick."""
         best = self.algo.getBest()
         if best * self.direction < 0 and not self.csteering:
             self.changeDirection()
@@ -182,6 +184,9 @@ class Railgun(Client):
         finally:
             print(f"[Railgun] Input write {msg}")
 
+    def generateMs(self, tick: int):
+        return self.time_from + 10 * tick
+
     def generateDecimal(self, tick: int):
         t = self.time_from // 10 + tick
         h, m, s, c = t//360000, t//6000%60, t//100%60, t%100
@@ -205,26 +210,30 @@ class Railgun(Client):
         finally:
             return f"TMInterface{server_id}"
 
-    def main(self):
-        server_name = self.getServerName()
+    def main(self, server_name = getServerName()):
         print(f"[Railgun] Connecting to {server_name}...")
         run_client(self, server_name)
         print(f"[Railgun] Deregistered from {server_name}")
 
 class SteerAlgo:
-    """Steering algorithm implementation for finding sd steering values"""
+    """
+    Steering algorithm implementation for finding sd steering values.\n
+    The implementation uses a lot of hexadecimal
+    because the steering range goes from -0x10000 to 0x10000
+    which is easier to work with than 65536.
+    """
     def __init__(self):
         self.srange: tuple[int, int] = (0, 0)
         self.steerGen = None
         self.data: list[tuple] = []
         self.best: tuple[np.floating, int] = (0, 0)
-        self.stepflag: bool = False
+        self.running: bool = False
 
     def setupNewTick(self, direction: int):
         self.data = [(0, 0x8000 * direction)]
         self.setSteerRange(0x8000) 
         self.steerGen = self.getSteerGen()
-        self.stepflag = False
+        self.running = True
 
     def addData(self, data: tuple):
         self.data.append(data)
@@ -239,27 +248,30 @@ class SteerAlgo:
         return self.best[1]
 
     def getSteerGen(self):
+        """
+        Generator that calculates a range of steering values
+        based on the steering range.\n
+        If the distance between potential candidates
+        is small enough, reset the running flag
+        and go past each int individually, in the remaining range.
+        """
         mins, maxs = min(self.srange), max(self.srange)
-        step = (maxs - mins) >> 0x3
-        if stepflag := step < 0x4:
-            for s in range(mins, maxs + 1):
-                if s != self.best[1] and abs(s) <= 0x10000:
-                    yield s
-        else:
-            for s in (mins + step, mins + 3 * step, maxs - 3 * step, maxs - step):
-                if abs(s) <= 0x10000:
-                    yield s
+        running = (step := (maxs - mins) >> 0x3) >= 0x4
+        offset = step * running
+        for s in range(mins + offset, maxs - offset + 1, 2 * offset + (not running)):
+            if s != self.best[1] and abs(s) <= 0x10000:
+                yield s
         self.setSteerRange(step << 0x1) # this bit-shift goes hard
         self.data = [self.best]
-        self.stepflag = stepflag
+        self.running = running
 
     def getSteer(self):
         if (steer := next(self.steerGen, None)) != None:
             return steer
-        elif not self.stepflag:
+        elif self.running:
             self.steerGen = self.getSteerGen()
-            return next(self.steerGen) # except if stepflag fails
-        return 0
+            return next(self.steerGen) # except if running flag fails
+        return 0 # doesn't matter what is returned, because generator is done running
 
 class RgState:
     """Modified version of SimStateData that automatically calculates relevant values for this script."""
@@ -273,6 +285,7 @@ class RgState:
         self.sdvel = np.float64(0)
 
     def update(self, iface: TMInterface):
+        """Run this at the start of every tick and you won't have to calculate anything in the main client."""
         self.data = iface.get_simulation_state()
         self.velocity = np.linalg.norm(self.data.velocity)
         self.speed = self.velocity * 3.6
@@ -312,7 +325,7 @@ class default:
         self.reset()
 
     def reset(self):
-        self.schedule = [self.rg.getFirstInput]
+        self.schedule = [self.rg.setFirstInput]
         self.resetStepFlag()
 
     def setStepFlag(self):
@@ -324,13 +337,13 @@ class default:
     def exec(self):
         schedule = self.schedule.copy()
         self.schedule.clear()
-        for fn in schedule:
+        for fn in schedule: # avoid side effects
             fn()
 
 class s4d(default):
-    """s4d mode for road"""
+    """s4d mode for road."""
     def reset(self):
-        self.schedule = [self.rg.getFirstInput, self.checks4d]
+        self.schedule = [self.rg.setFirstInput, self.checks4d]
         self.resetStepFlag()
 
     def isUndersteering(self):
@@ -355,14 +368,14 @@ class s4d(default):
             self.schedule.append(self.resets4d)
 
 class s4dirt(s4d):
-    """s4d mode for dirt"""
+    """s4d mode for dirt."""
     def minLvx(self):
         return 0.25 + (self.rg.state.speed > 235) * (306 - self.rg.state.speed) / 1000
 
 class wiggle(default):
-    """wiggle mode for grass"""
+    """wiggle mode for grass."""
     def reset(self):
-        self.schedule = [self.rg.getFirstInput, self.checkWiggle]
+        self.schedule = [self.rg.setFirstInput, self.checkWiggle]
         self.resetWiggleTimer()
 
     def resetWiggleTimer(self):
@@ -380,7 +393,7 @@ class wiggle(default):
         self.rg.addToSchedule(self.rg.changeDirection)
 
 class wiggledirt(wiggle, s4dirt):
-    """wiggle mode for dirt"""
+    """wiggle mode for dirt."""
     def reset(self):
         super().reset()
         self.resetStepFlag()
