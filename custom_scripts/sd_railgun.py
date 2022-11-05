@@ -240,10 +240,15 @@ class SteerAlgo:
 
     def getSteerGen(self):
         mins, maxs = min(self.srange), max(self.srange)
-        stepflag = not (step := (maxs - mins) >> 0x4)
-        for s in np.linspace(mins + step, maxs - step, 0x8 - 3 * stepflag, dtype=int):
-            if s != self.best[1] and abs(s) <= 0x10000:
-                yield int(s)
+        step = (maxs - mins) >> 0x3
+        if stepflag := step < 0x4:
+            for s in range(mins, maxs + 1):
+                if s != self.best[1] and abs(s) <= 0x10000:
+                    yield s
+        else:
+            for s in (mins + step, mins + 3 * step, maxs - 3 * step, maxs - step):
+                if abs(s) <= 0x10000:
+                    yield s
         self.setSteerRange(step << 0x1) # this bit-shift goes hard
         self.data = [self.best]
         self.stepflag = stepflag
@@ -253,7 +258,7 @@ class SteerAlgo:
             return steer
         elif not self.stepflag:
             self.steerGen = self.getSteerGen()
-            return next(self.steerGen)
+            return next(self.steerGen) # except if stepflag fails
         return 0
 
 class RgState:
