@@ -26,8 +26,8 @@ class Railgun(Client):
         self.input_time = -1
         self.schedule = []
         self.inputs = []
-        self.algo = SteerAlgo()
         self.state = RgState()
+        self.algo = Steerer()
 
     def load_cfg(self):
         """
@@ -115,10 +115,7 @@ class Railgun(Client):
             iface.rewind_to_state(self.step)
             return
         elif _time == self.input_time:
-            self.sdmode.exec()
-            if self.sdmode.stepflag:
-                self.sdmode.resetStepFlag()
-                self.nextStep(iface)
+            if self.executeSchedule(iface):
                 return
             self.steer = self.algo.getSteer()
             if not self.algo.running:
@@ -129,6 +126,18 @@ class Railgun(Client):
 
         if _time >= self.input_time:
             iface.set_input_state(sim_clear_buffer=False, steer=self.steer)
+
+    def executeSchedule(self, iface: TMInterface):
+        self.sdmode.executeSchedule()
+        schedule = self.schedule.copy()
+        self.schedule.clear()
+        for fn in schedule:
+            fn()
+        if self.sdmode.stepflag:
+            self.sdmode.resetStepFlag()
+            self.nextStep(iface)
+            return True
+        return False
 
     def on_simulation_end(self, *_):
         print("[Railgun] Saving steering inputs to sd_railgun.txt...")
@@ -215,64 +224,6 @@ class Railgun(Client):
         run_client(self, server_name)
         print(f"[Railgun] Deregistered from {server_name}")
 
-class SteerAlgo:
-    """
-    Steering algorithm implementation for finding sd steering values.\n
-    The implementation uses a lot of hexadecimal
-    because the steering range goes from -0x10000 to 0x10000
-    which is easier to work with than 65536.
-    """
-    def __init__(self):
-        self.srange: tuple[int, int] = (0, 0)
-        self.steerGen = None
-        self.data: list[tuple] = []
-        self.best: tuple[np.floating, int] = (0, 0)
-        self.running: bool = False
-
-    def setupNewTick(self, direction: int):
-        self.data = [(0, 0x8000 * direction)]
-        self.setSteerRange(0x8000) 
-        self.steerGen = self.getSteerGen()
-        self.running = True
-
-    def addData(self, data: tuple):
-        self.data.append(data)
-
-    def setSteerRange(self, step: int):
-        best = self.getBest()
-        self.srange = (best - step, best + step)
-
-    def getBest(self):
-        self.data.sort(reverse=True)
-        self.best = self.data[0]
-        return self.best[1]
-
-    def getSteerGen(self):
-        """
-        Generator that calculates a range of steering values
-        based on the steering range.\n
-        If the distance between potential candidates
-        is small enough, reset the running flag
-        and go past each int individually, in the remaining range.
-        """
-        mins, maxs = min(self.srange), max(self.srange)
-        running = (step := (maxs - mins) >> 0x3) >= 0x4
-        offset = step * running
-        for s in range(mins + offset, maxs - offset + 1, 2 * offset + (not running)):
-            if s != self.best[1] and abs(s) <= 0x10000:
-                yield s
-        self.setSteerRange(step << 0x1) # this bit-shift goes hard
-        self.data = [self.best]
-        self.running = running
-
-    def getSteer(self):
-        if (steer := next(self.steerGen, None)) != None:
-            return steer
-        elif self.running:
-            self.steerGen = self.getSteerGen()
-            return next(self.steerGen) # except if running flag fails
-        return 0 # doesn't matter what is returned, because generator is done running
-
 class RgState:
     """Modified version of SimStateData that automatically calculates relevant values for this script."""
     def __init__(self):
@@ -318,6 +269,64 @@ class RgState:
             for i in self.wheels_size
         ]
 
+class Steerer:
+    """
+    Steering algorithm implementation for finding sd steering values.\n
+    The implementation uses a lot of hexadecimal
+    because the steering range goes from -0x10000 to 0x10000
+    which is easier to work with than 65536.
+    """
+    def __init__(self):
+        self.data: list[tuple] = []
+        self.srange: tuple[int, int] = (0, 0)
+        self.best: tuple[np.floating, int] = (0, 0)
+        self.steerGen = None
+        self.running: bool = False
+
+    def setupNewTick(self, direction: int):
+        self.data = [(0, 0x8000 * direction)]
+        self.setSteerRange(0x8000) 
+        self.steerGen = self.getSteerGen()
+        self.running = True
+
+    def addData(self, data: tuple):
+        self.data.append(data)
+
+    def setSteerRange(self, step: int):
+        best = self.getBest()
+        self.srange = (best - step, best + step)
+
+    def getBest(self):
+        self.data.sort(reverse=True)
+        self.best = self.data[0]
+        return self.best[1]
+
+    def getSteerGen(self):
+        """
+        Generator that calculates a range of steering values
+        based on the steering range.\n
+        If the distance between potential candidates
+        is small enough, reset the running flag
+        and go past each int individually, in the remaining range.
+        """
+        mins, maxs = min(self.srange), max(self.srange)
+        running = (step := (maxs - mins) >> 3) >= 4
+        step = (offset := step * running) << 1 # Extremely cursed double walrus into bit-shift
+        for s in range(mins + offset, maxs - offset + 1, step + (not running)):
+            if s != self.best[1] and abs(s) <= 0x10000:
+                yield s
+        self.setSteerRange(step)
+        self.data = [self.best]
+        self.running = running
+
+    def getSteer(self):
+        if (steer := next(self.steerGen, None)) != None:
+            return steer
+        elif self.running:
+            self.steerGen = self.getSteerGen()
+            return next(self.steerGen) # except if running flag fails
+        return 0 # doesn't matter what is returned, because generator is done running
+
 class default:
     """Base class for all sdmode implementations."""
     def __init__(self, rg: Railgun):
@@ -334,7 +343,7 @@ class default:
     def resetStepFlag(self):
         self.stepflag = False
 
-    def exec(self):
+    def executeSchedule(self):
         schedule = self.schedule.copy()
         self.schedule.clear()
         for fn in schedule: # avoid side effects
