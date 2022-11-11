@@ -11,6 +11,17 @@ from tminterface.constants import SIMULATION_WHEELS_SIZE
 USE_DECIMAL_NOTATION = False # set to True for decimal notation, False for milliseconds
 # You shouldn't need to change anything except for the previous line (if you want decimal notation of course)
 
+def getServerName():
+    try:
+        server_id = int(
+            input("[Railgun] Enter the TMInterface instance ID you would like to connect to...\n")
+        )
+        server_id *= (server_id > 0)
+    except:
+        server_id = 0
+    finally:
+        return f"TMInterface{server_id}"
+
 class Railgun(Client):
     """Main Client Implementation."""
     def __init__(self):
@@ -206,18 +217,6 @@ class Railgun(Client):
         h = f"{h}:" if h else ""
 
         return h + m + s + c
-
-    @staticmethod
-    def getServerName():
-        try:
-            server_id = int(
-                input("[Railgun] Enter the TMInterface instance ID you would like to connect to...\n")
-            )
-            server_id *= (server_id > 0)
-        except:
-            server_id = 0
-        finally:
-            return f"TMInterface{server_id}"
 
     def main(self, server_name = getServerName()):
         print(f"[Railgun] Connecting to {server_name}...")
