@@ -110,7 +110,7 @@ class Railgun(Client):
         self.input_time = self.time_from
 
         self.resetSeek()
-        self.schedule.clear()
+        self.schedule = [self.setFirstInput]
         self.csteering = False
         self.algo.setupNewTick(self.direction)
 
@@ -164,11 +164,11 @@ class Railgun(Client):
     def resetSeek(self):
         self.seek = 120
 
-    def addToSchedule(self, fn):
-        self.schedule.append(fn)
-
     def setFirstInput(self):
         self.inputs = [self.state.data.input_steer]
+
+    def addToSchedule(self, fn):
+        self.schedule.append(fn)
 
     def nextStep(self, iface: TMInterface):
         """Re-do the current tick while countersteering or go to the next tick."""
@@ -203,6 +203,7 @@ class Railgun(Client):
             msg = "failed."
         finally:
             print(f"[Railgun] Input write {msg}")
+            self.inputs.clear()
 
     def generateMs(self, tick: int):
         return self.time_from + 10 * tick
@@ -330,10 +331,11 @@ class default:
     """Base class for all sdmode implementations."""
     def __init__(self, rg: Railgun):
         self.rg = rg
-        self.reset()
+        self.schedule = []
+        self.resetStepFlag()
 
     def reset(self):
-        self.schedule = [self.rg.setFirstInput]
+        self.schedule.clear()
         self.resetStepFlag()
 
     def setStepFlag(self):
@@ -351,7 +353,7 @@ class default:
 class s4d(default):
     """s4d mode for road."""
     def reset(self):
-        self.schedule = [self.rg.setFirstInput, self.checks4d]
+        self.schedule = [self.checks4d]
         self.resetStepFlag()
 
     def isUndersteering(self):
@@ -383,7 +385,7 @@ class s4dirt(s4d):
 class wiggle(default):
     """wiggle mode for grass."""
     def reset(self):
-        self.schedule = [self.rg.setFirstInput, self.checkWiggle]
+        self.schedule = [self.checkWiggle]
         self.resetWiggleTimer()
 
     def resetWiggleTimer(self):
