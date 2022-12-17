@@ -121,7 +121,7 @@ class Wallhugger(Client):
         self.writeSteerToFile()
 
     def resetSeek(self):
-        self.seek = 300
+        self.seek = 360
 
     def setFirstInput(self):
         self.inputs = [self.state.data.input_steer]
@@ -187,7 +187,7 @@ class WhState:
         self.speed = self.velocity * 3.6
         self.setLocalVelocity()
         sign = int(self.lvx > 0) - int(self.lvx < 0)
-        self.wheval = self.getEvalVelocity() * sign
+        self.wheval = sign * self.getEvalVelocity()
 
     def setLocalVelocity(self):
         self.lvx, self.lvy, self.lvz = [self.getLocalVelocity(i) for i in range(3)]
@@ -197,8 +197,9 @@ class WhState:
             [self.data.velocity[i] * self.data.rotation_matrix[i][idx] for i in range(3)]
         )
 
+    FORWARDS_SCALE = 0.03125
     def getEvalVelocity(self):
-        return np.linalg.norm((self.lvx, self.lvz ** 0.375))
+        return np.linalg.norm((self.lvx, self.lvz * self.FORWARDS_SCALE))
 
 class Steerer:
     """
