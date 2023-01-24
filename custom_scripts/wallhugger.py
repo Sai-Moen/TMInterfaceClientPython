@@ -10,9 +10,10 @@ USE_DECIMAL_NOTATION = False # set to True for decimal notation, False for milli
 # You shouldn't need to change anything except for the previous line (if you want decimal notation of course)
 
 FULLSTEER = 0x10000
+MAX_VEL_LOSS = 0.015625
 TICK_MS = 10
-SEEK = 40 * TICK_MS
-HOLD = 30 * TICK_MS
+SEEK = 50 * TICK_MS
+HOLD = 25 * TICK_MS
 
 TAG = "[Wallhugger] "
 def getServerName():
@@ -128,7 +129,7 @@ class Wallhugger(Client):
         iface.set_input_state(sim_clear_buffer=False, steer=steer)
 
     def getSteer(self):
-        if self.state.isColliding:
+        if self.state.isCrashed:
             self.collider = self.steer
         else:
             self.avoider = self.steer
@@ -158,7 +159,7 @@ class Wallhugger(Client):
         iface.rewind_to_state(self.step)
 
     def onCollisionCheck(self, iface: TMInterface):
-        if self.state.isColliding:
+        if self.state.isCrashed:
             self.isAvoiding = True
             self.steer = self.getSteer()
             iface.rewind_to_state(self.step)
@@ -172,8 +173,8 @@ class Wallhugger(Client):
             with open("wallhugger.txt", 'w') as f:
                 f.writelines(
                     [
-                        f"{self.generateCmdTime(t[0])} steer {t[1]}\n" for t in
-                        enumerate(self.inputs[1:]) if t[1] != self.inputs[t[0]]
+                        f"{self.generateCmdTime(t)} steer {s}\n" for t, s in
+                        enumerate(self.inputs[1:]) if s != self.inputs[t]
                     ]
                 )
         except:
@@ -207,15 +208,18 @@ class WhState:
         self.data = SimStateData()
         self.velocity = np.float64(0)
         self.speed = np.float64(0)
-        self.isColliding = False
+        self.isCrashed = False
 
     def update(self, iface: TMInterface, _time: int):
         """Run this at the start of every tick and you won't have to calculate anything in the main client."""
         self.race_time = _time
         self.data = iface.get_simulation_state()
+        prev_vel = self.velocity
         self.velocity = np.linalg.norm(self.data.velocity)
         self.speed = self.velocity * 3.6
-        self.isColliding = any(unpack('2i', self.data.scene_mobil[1496:1504]))
+        isTooSlow = self.velocity < prev_vel - MAX_VEL_LOSS
+        isColliding = any(unpack('2i', self.data.scene_mobil[1496:1504]))
+        self.isCrashed = isTooSlow or isColliding
 
 if __name__ == "__main__":
     Wallhugger().main()
