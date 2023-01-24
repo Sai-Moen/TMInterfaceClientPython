@@ -12,8 +12,8 @@ USE_DECIMAL_NOTATION = False # set to True for decimal notation, False for milli
 FULLSTEER = 0x10000
 MAX_VEL_LOSS = 0.015625
 TICK_MS = 10
-SEEK = 50 * TICK_MS
-HOLD = 25 * TICK_MS
+SEEK = 40 * TICK_MS
+HOLD = 30 * TICK_MS
 
 TAG = "[Wallhugger] "
 def getServerName():
@@ -135,14 +135,15 @@ class Wallhugger(Client):
             self.avoider = self.steer
         self.isDone = abs(self.avoider - self.collider) <= 1
         if self.isDone:
-            return self.avoider
+            correction = self.direction * (abs(self.avoider) < FULLSTEER)
+            return self.avoider - correction
         return (self.avoider + self.collider) >> 1
 
     def onInputTime(self, iface: TMInterface):
         if self.isDone:
-            self.inputSteer(iface, self.avoider)
-            self.inputs.append(self.avoider)
-            print(f"{self.input_time} steer {self.avoider} -> {self.state.speed} km/h")
+            self.inputSteer(iface, self.steer)
+            self.inputs.append(self.steer)
+            print(f"{self.input_time} steer {self.steer} -> {self.state.speed} km/h")
 
             self.reset()
             self.input_time += TICK_MS
@@ -154,7 +155,6 @@ class Wallhugger(Client):
         if self.isAvoiding:
             self.steer = self.getSteer()
         else:
-            self.avoider = self.steer
             self.isDone = True
         iface.rewind_to_state(self.step)
 
