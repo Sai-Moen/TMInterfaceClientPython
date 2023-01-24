@@ -4,17 +4,20 @@ import numpy as np
 from tminterface.client import Client, run_client
 from tminterface.interface import TMInterface
 from tminterface.structs import SimStateData
-
-from struct import unpack
 from tminterface.constants import SIMULATION_WHEELS_SIZE
+from struct import unpack
 
 USE_DECIMAL_NOTATION = False # set to True for decimal notation, False for milliseconds
 # You shouldn't need to change anything except for the previous line (if you want decimal notation of course)
 
+FULLSTEER = 0x10000
+TICK_MS = 10
+
+TAG = "[Railgun] "
 def getServerName():
     try:
         server_id = int(
-            input("[Railgun] Enter the TMInterface instance ID you would like to connect to...\n")
+            input(TAG + "Enter the TMInterface instance ID you would like to connect to...\n")
         )
         server_id *= (server_id > 0)
     except:
@@ -26,11 +29,11 @@ class Railgun(Client):
     """Main Client Implementation."""
     def __init__(self):
         self.cfg = {
-            "time_from" : -1,
-            "time_to" : -1,
-            "direction" : 0,
-            "sdmode" : default(self),
-            "use_decimal" : USE_DECIMAL_NOTATION
+            "time_from": -1,
+            "time_to": -1,
+            "direction": 0,
+            "sdmode": default(self),
+            "use_decimal": USE_DECIMAL_NOTATION
         }
         self.load_cfg()
 
@@ -52,12 +55,12 @@ class Railgun(Client):
         self.generateCmdTime = self.generateDecimal if self.cfg["use_decimal"] else self.generateMs
 
     def on_registered(self, iface: TMInterface):
-        print(f"[Railgun] Registered to {iface.server_name}")
+        print(TAG + f"Registered to {iface.server_name}")
         iface.execute_command("set controller none")
         iface.register_custom_command("sd")
-        iface.log("[Railgun] Use the sd command to set a time range and direction: time_from-time_to sd direction")
+        iface.log(TAG + "Use the sd command to set a time range and direction: time_from-time_to sd direction")
         iface.register_custom_command("sdmode")
-        iface.log("[Railgun] Use the sdmode command to switch between: default, s4d, s4dirt, wiggle or wiggledirt.")
+        iface.log(TAG + "Use the sdmode command to switch between: default, s4d, s4dirt, wiggle or wiggledirt.")
 
     def on_custom_command(self, iface: TMInterface, time_from: int, time_to: int, command: str, args: list):
         if command == "sd":
@@ -65,22 +68,22 @@ class Railgun(Client):
         elif command == "sdmode":
             msg = self.on_sdmode(args)
         else:
+            iface.log(TAG + "Invalid command", "error")
             return
-        iface.log(*msg)
+        iface.log(TAG + msg[0], msg[1])
 
     def on_sd(self, time_from: int, time_to: int, args: list):
         if time_to == -1 or time_from == -1:
-            return "[Railgun] Timerange not set, Usage: time_from-time_to sd direction", "warning"
+            return "Timerange not set, Usage: time_from-time_to sd direction", "warning"
         elif len(args) == 1 and args[0] in ("left", "right"):
             self.cfg["direction"] = int(args[0] == "right") - int(args[0] == "left")
             self.cfg["time_from"], self.cfg["time_to"] = time_from, time_to
-            return "[Railgun] sd settings changed successfully!", "success"
-        return "[Railgun] Usage: time_from-time_to sd direction", "warning"
+            return "sd settings changed successfully!", "success"
+        return "Usage: time_from-time_to sd direction", "warning"
 
     def on_sdmode(self, args: list):
         if not args:
-            self.cfg["sdmode"] = default(self)
-            return "[Railgun] sdmode reset to default", "success"
+            return "Usage: sdmode <default, s4d, s4dirt, wiggle or wiggledirt>", "log"
         elif len(args) == 1:
             mode = args[0]
             if mode == "default":
@@ -94,19 +97,23 @@ class Railgun(Client):
             elif mode == "wiggledirt":
                 self.cfg["sdmode"] = wiggledirt(self)
             else:
-                return "[Railgun] Invalid mode", "warning"
-            return f"[Railgun] sdmode set to {mode}", "success"
-        return "[Railgun] Usage: sdmode <default, s4d, s4dirt, wiggle or wiggledirt>", "warning"
+                return "Invalid mode", "warning"
+            return f"sdmode set to {mode}", "success"
+        return "Usage: sdmode <default, s4d, s4dirt, wiggle or wiggledirt>", "warning"
 
     def on_simulation_begin(self, iface: TMInterface):
         iface.remove_state_validation()
         self.load_cfg()
         if not self.direction:
-            iface.log("[Railgun] Usage: time_from-time_to sd direction", "error")
+            iface.log(TAG + "Usage: time_from-time_to sd direction", "error")
             iface.close()
-            print("[Railgun] Closed due to exception, use the sd command to change timerange and direction.")
+            print(TAG + "Closed due to exception, use the sd command to change timerange and direction.")
             return
-        print(f"[Railgun] Simulating from {self.time_from} to {self.time_to} trying to sd {self.direction}")
+        print(TAG + "Simulation variables:")
+        print(f"time_from: {self.time_from}")
+        print(f"time_to: {self.time_to}")
+        print(f"direction: {self.direction}")
+        print(f"sdmode: {type(self.sdmode)}")
         self.input_time = self.time_from
 
         self.resetSeek()
@@ -114,14 +121,14 @@ class Railgun(Client):
         self.csteering = False
         self.algo.setupNewTick(self.direction)
 
-        self.time_limit = self.time_to + self.seek + 10
+        self.time_limit = self.time_to + self.seek + TICK_MS
         iface.set_simulation_time_limit(self.time_limit - 10010) # temporary manual offset
 
     def on_simulation_step(self, iface: TMInterface, _time: int):
-        self.state.update(iface)
         if _time >= self.time_limit:
             return
-        elif _time == self.input_time + self.seek:
+        self.state.update(iface)
+        if _time == self.input_time + self.seek:
             self.algo.addData((self.state.sdvel, self.steer))
             iface.rewind_to_state(self.step)
             return
@@ -132,7 +139,7 @@ class Railgun(Client):
             if not self.algo.running:
                 self.nextStep(iface)
                 return
-        elif _time == self.input_time - 10:
+        elif _time == self.input_time - TICK_MS:
             self.step = self.state.data
 
         if _time >= self.input_time:
@@ -147,15 +154,14 @@ class Railgun(Client):
         if self.sdmode.stepflag:
             self.sdmode.resetStepFlag()
             self.nextStep(iface)
-            return True
-        return False
+        return self.sdmode.stepflag
 
     def on_simulation_end(self, *_):
-        print("[Railgun] Saving steering inputs to sd_railgun.txt...")
+        print(TAG + "Saving steering inputs to sd_railgun.txt...")
         self.writeSteerToFile()
 
     def on_deregistered(self, *_):
-        print("[Railgun] Attempting to back up most recent inputs to sd_railgun.txt...")
+        print(TAG + "Attempting to back up most recent inputs to sd_railgun.txt...")
         self.writeSteerToFile()
 
     def setSeek(self, ms: int):
@@ -181,7 +187,7 @@ class Railgun(Client):
             print(f"{self.input_time} steer {best} -> {self.state.speed} km/h")
             if self.csteering:
                 self.changeDirection()
-            self.input_time += 10
+            self.input_time += TICK_MS
         self.algo.setupNewTick(self.direction)
         iface.rewind_to_state(self.step)
 
@@ -190,26 +196,27 @@ class Railgun(Client):
         self.csteering ^= True
 
     def writeSteerToFile(self):
-        msg = "success!"
         try:
             with open("sd_railgun.txt", 'w') as f:
                 f.writelines(
                     [
-                        f"{self.generateCmdTime(t[0])} steer {t[1]}\n" for t in
-                        enumerate(self.inputs[1:]) if t[1] != self.inputs[t[0]]
+                        f"{self.generateCmdTime(t)} steer {s}\n" for t, s in
+                        enumerate(self.inputs[1:]) if s != self.inputs[t]
                     ]
                 )
         except:
             msg = "failed."
+        else:
+            msg = "success!"
         finally:
-            print(f"[Railgun] Input write {msg}")
+            print(TAG + f"Input write {msg}")
             self.inputs.clear()
 
     def generateMs(self, tick: int):
-        return self.time_from + 10 * tick
+        return self.time_from + TICK_MS * tick
 
     def generateDecimal(self, tick: int):
-        t = self.time_from // 10 + tick
+        t = self.time_from // TICK_MS + tick
         h, m, s, c = t//360000, t//6000%60, t//100%60, t%100
 
         c = f"{c / 100}".removeprefix("0")
@@ -220,9 +227,9 @@ class Railgun(Client):
         return h + m + s + c
 
     def main(self, server_name = getServerName()):
-        print(f"[Railgun] Connecting to {server_name}...")
+        print(TAG + f"Connecting to {server_name}...")
         run_client(self, server_name)
-        print(f"[Railgun] Deregistered from {server_name}")
+        print(TAG + f"Deregistered from {server_name}")
 
 class RgState:
     """Modified version of SimStateData that automatically calculates relevant values for this script."""
@@ -231,7 +238,7 @@ class RgState:
         self.velocity = np.float64(0)
         self.speed = np.float64(0)
 
-        self.wheels = [0, 0, 0, 0]
+        self.wheels = [False, False, False, False]
         self.setLocalVelocity()
         self.sdvel = np.float64(0)
 
@@ -262,20 +269,15 @@ class RgState:
             )
         )
 
-    wheels_size = tuple([(SIMULATION_WHEELS_SIZE >> 2) * i for i in range(4)])
+    WHEELS_SIZE = tuple([(SIMULATION_WHEELS_SIZE >> 2) * i for i in range(4)])
     def getWheelContact(self):
         return [
-            unpack('i', self.data.simulation_wheels[i+292:i+296])[0]
-            for i in self.wheels_size
+            bool(unpack('i', self.data.simulation_wheels[i+292:i+296]))
+            for i in self.WHEELS_SIZE
         ]
 
 class Steerer:
-    """
-    Steering algorithm implementation for finding sd steering values.\n
-    The implementation uses a lot of hexadecimal
-    because the steering range goes from -0x10000 to 0x10000
-    which is easier to work with than 65536.
-    """
+    """Steering algorithm implementation for finding sd steering values."""
     def __init__(self):
         self.data: list[tuple] = []
         self.srange: tuple[int, int] = (0, 0)
@@ -311,9 +313,9 @@ class Steerer:
         """
         mins, maxs = min(self.srange), max(self.srange)
         running = (step := (maxs - mins) >> 3) >= 4
-        step = (offset := step * running) << 1 # Extremely cursed double walrus into bit-shift
+        step = (offset := step * running) << 1
         for s in range(mins + offset, maxs - offset + 1, step + (not running)):
-            if s != self.best[1] and abs(s) <= 0x10000:
+            if s != self.best[1] and abs(s) <= FULLSTEER:
                 yield s
         self.setSteerRange(step)
         self.data = [self.best]
