@@ -5,12 +5,12 @@ from tminterface.client import Client, run_client
 from tminterface.interface import TMInterface
 from tminterface.structs import SimStateData
 from tminterface.constants import SIMULATION_WHEELS_SIZE
-from struct import unpack
 
 USE_DECIMAL_NOTATION = False # set to True for decimal notation, False for milliseconds
 # You shouldn't need to change anything except for the previous line (if you want decimal notation of course)
 
 FULLSTEER = 0x10000
+HALF_STEER = 0x8000
 TICK_MS = 10
 
 TAG = "[Railgun] "
@@ -127,12 +127,13 @@ class Railgun(Client):
     def on_simulation_step(self, iface: TMInterface, _time: int):
         if _time >= self.time_limit:
             return
-        self.state.update(iface)
         if _time == self.input_time + self.seek:
-            self.algo.addData((self.state.sdvel, self.steer))
+            self.state.update(iface)
+            self.algo.addData((self.state.sd_vel, self.steer))
             iface.rewind_to_state(self.step)
             return
         elif _time == self.input_time:
+            self.state.update(iface)
             if self.executeSchedule(iface):
                 return
             self.steer = self.algo.getSteer()
@@ -140,6 +141,7 @@ class Railgun(Client):
                 self.nextStep(iface)
                 return
         elif _time == self.input_time - TICK_MS:
+            self.state.update(iface)
             self.step = self.state.data
 
         if _time >= self.input_time:
@@ -238,9 +240,9 @@ class RgState:
         self.velocity = np.float64(0)
         self.speed = np.float64(0)
 
-        self.wheels = [False, False, False, False]
-        self.setLocalVelocity()
-        self.sdvel = np.float64(0)
+        self.not_all_wheels = False
+        self.local_vel = np.array([0, 0, 0])
+        self.sd_vel = np.float64(0)
 
     def update(self, iface: TMInterface):
         """Run this at the start of every tick and you won't have to calculate anything in the main client."""
@@ -248,46 +250,31 @@ class RgState:
         self.velocity = np.linalg.norm(self.data.velocity)
         self.speed = self.velocity * 3.6
 
-        self.wheels = self.getWheelContact()
-        self.setLocalVelocity()
-        self.sdvel = self.getEvalVelocity()
+        self.not_all_wheels = not self.isFullGroundContact()
+        self.local_vel = self.data.scene_mobil.current_local_speed
+        self.local_vel[1] *= self.not_all_wheels
+        self.sd_vel = np.linalg.norm(self.local_vel)
 
-    def setLocalVelocity(self):
-        self.lvx, self.lvy, self.lvz = [self.getLocalVelocity(i) for i in range(3)]
-
-    def getLocalVelocity(self, idx: int):
-        return np.sum(
-            [self.data.velocity[i] * self.data.rotation_matrix[i][idx] for i in range(3)]
+    def isFullGroundContact(self):
+        return all(
+            [
+                w.real_time_state.has_ground_contact
+                for w in self.data.simulation_wheels
+            ]
         )
-
-    def getEvalVelocity(self):
-        return np.linalg.norm(
-            (
-                self.lvx,
-                self.lvy * (not all(self.wheels)),
-                self.lvz
-            )
-        )
-
-    WHEELS_SIZE = tuple([(SIMULATION_WHEELS_SIZE >> 2) * i for i in range(4)])
-    def getWheelContact(self):
-        return [
-            bool(unpack('i', self.data.simulation_wheels[i+292:i+296]))
-            for i in self.WHEELS_SIZE
-        ]
 
 class Steerer:
     """Steering algorithm implementation for finding sd steering values."""
     def __init__(self):
-        self.data: list[tuple] = []
-        self.srange: tuple[int, int] = (0, 0)
-        self.best: tuple[np.floating, int] = (0, 0)
+        self.data = []
+        self.srange = (0, 0)
+        self.best = (0.0, 0)
         self.steerGen = None
-        self.running: bool = False
+        self.running = False
 
     def setupNewTick(self, direction: int):
-        self.data = [(0, 0x8000 * direction)]
-        self.setSteerRange(0x8000) 
+        self.data = [(0, HALF_STEER * direction)]
+        self.setSteerRange(HALF_STEER) 
         self.steerGen = self.getSteerGen()
         self.running = True
 
@@ -304,13 +291,6 @@ class Steerer:
         return self.best[1]
 
     def getSteerGen(self):
-        """
-        Generator that calculates a range of steering values
-        based on the steering range.\n
-        If the distance between potential candidates
-        is small enough, reset the running flag
-        and go past each int individually, in the remaining range.
-        """
         mins, maxs = min(self.srange), max(self.srange)
         running = (step := (maxs - mins) >> 3) >= 4
         step = (offset := step * running) << 1
@@ -359,7 +339,7 @@ class s4d(default):
         self.resetStepFlag()
 
     def isUndersteering(self):
-        return self.rg.state.lvx * self.rg.direction < self.minLvx()
+        return self.rg.state.local_vel[0] * self.rg.direction < self.minLvx()
 
     def minLvx(self):
         return 4 - 0.5 * ((self.rg.state.speed > 401) * ((self.rg.state.speed - 401) / 100))
