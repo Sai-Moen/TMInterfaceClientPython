@@ -1,6 +1,6 @@
 # wallhugger; wh script by SaiMoen
 
-import numpy as np
+from numpy.linalg import norm
 from tminterface.client import Client, run_client
 from tminterface.interface import TMInterface
 from tminterface.structs import SimStateData
@@ -11,7 +11,7 @@ USE_DECIMAL_NOTATION = False # set to True for decimal notation, False for milli
 FULLSTEER = 0x10000
 TICK_MS = 10
 SEEK = 40 * TICK_MS
-MAX_VEL_LOSS = 0.015625 * SEEK
+MAX_VEL_LOSS = 0.002 * SEEK
 
 TAG = "[Wallhugger] "
 def getServerName():
@@ -89,9 +89,7 @@ class Wallhugger(Client):
 
         self.fullsteer = FULLSTEER * self.direction
         self.countersteer = -FULLSTEER * self.direction
-
         self.inputs: list = [None]
-        self.step = SimStateData()
         self.reset()
 
         self.time_limit = self.time_to + SEEK + TICK_MS
@@ -101,15 +99,15 @@ class Wallhugger(Client):
         if _time >= self.time_limit:
             return
         elif _time == self.input_time + SEEK:
-            self.onNoCollision(iface)
-        elif _time > self.input_time:
             self.onCollisionCheck(iface)
+            return
         elif _time == self.input_time:
             self.onInputTime(iface)
         elif _time == self.input_time - TICK_MS:
-            self.state.update(iface, 0)
-            self.step = self.state.data
-            self.prev_vel = np.linalg.norm(self.step.velocity)
+            self.step = iface.get_simulation_state()
+
+        if _time > self.input_time:
+            self.inputSteer(iface, self.steer)
 
     def on_simulation_end(self, *_):
         print(TAG + "Saving steering inputs to wallhugger.txt...")
@@ -121,7 +119,6 @@ class Wallhugger(Client):
 
     def reset(self):
         self.isDone = False
-        self.isAvoiding = False
         self.avoider = self.countersteer
         self.collider = self.fullsteer
         self.steer = self.fullsteer
@@ -140,34 +137,20 @@ class Wallhugger(Client):
         return (self.avoider + self.collider) >> 1
 
     def onInputTime(self, iface: TMInterface):
+        self.inputSteer(iface, self.steer)
         if self.isDone:
-            self.inputSteer(iface, self.steer)
             self.inputs.append(self.steer)
-            speed = np.linalg.norm(self.step.velocity) * 3.6
+            speed = norm(self.step.velocity) * 3.6
             print(f"{self.input_time} steer {self.steer} -> {speed} km/h")
 
             self.reset()
             self.input_time += TICK_MS
             iface.rewind_to_state(self.step)
-            return
-        self.inputSteer(iface, self.steer)
-
-    def onNoCollision(self, iface: TMInterface):
-        if self.isAvoiding:
-            self.state.update(iface, self.prev_vel)
-            self.steer = self.getSteer()
-        else:
-            self.isDone = True
-        iface.rewind_to_state(self.step)
 
     def onCollisionCheck(self, iface: TMInterface):
-        self.state.update(iface, self.prev_vel)
-        if self.state.isCrashed:
-            self.isAvoiding = True
-            self.steer = self.getSteer()
-            iface.rewind_to_state(self.step)
-            return
-        self.inputSteer(iface, self.steer)
+        self.state.update(iface, self.step)
+        self.steer = self.getSteer()
+        iface.rewind_to_state(self.step)
 
     def writeSteerToFile(self):
         try:
@@ -207,21 +190,19 @@ class Wallhugger(Client):
 class WhState:
     """Modified version of SimStateData that automatically calculates relevant values for this script."""
     def __init__(self):
-        self.race_time = -2600
         self.data = SimStateData()
-        self.velocity = np.float64(0)
-        self.speed = np.float64(0)
+        self.velocity = 0
+        self.speed = 0
         self.isCrashed = False
 
-    def update(self, iface: TMInterface, prev_vel: np.floating):
-        """Run this at the start of every tick and you won't have to calculate anything in the main client."""
+    def update(self, iface: TMInterface, prev_state: SimStateData):
         self.data = iface.get_simulation_state()
-        self.race_time = self.data.race_time
-        self.velocity = np.linalg.norm(self.data.velocity)
+        self.velocity = norm(self.data.velocity)
         self.speed = self.velocity * 3.6
-        isTooSlow = self.velocity < prev_vel - MAX_VEL_LOSS
-        isColliding = self.data.scene_mobil.has_any_lateral_contact
-        self.isCrashed = isTooSlow or isColliding
+        isTooSlow = self.velocity < norm(prev_state.velocity) - MAX_VEL_LOSS
+        hasCollided = self.data.scene_mobil.last_has_any_lateral_contact_time !=\
+            prev_state.scene_mobil.last_has_any_lateral_contact_time
+        self.isCrashed = isTooSlow or hasCollided
 
 if __name__ == "__main__":
     Wallhugger().main()
