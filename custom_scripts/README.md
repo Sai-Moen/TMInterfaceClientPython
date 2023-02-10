@@ -58,5 +58,5 @@ At no point should you need to edit the code itself, if you find an error, just 
 5. (Optional) Deregister the python script and go over the inputs with a built-in or script bruteforcer to be sure that all of the map-specific quirks are ironed out. This will also sort your button presses again, if it finds an improvement at least.
 
 ##### Explanation:
-This script works largely the same as sd_railgun, but instead it tries to maximize the sideways velocity as much as possible, taking into account a small forward component as well. The seeking range is 300ms instead of 120ms because it's a bit tricky to get right.
+This script works largely the same as sd_railgun, but instead it tries to maximize the steering as much as possible, as long as the steering value doesn't make it crash or lose too much speed. The seeking timespan is 400ms instead of 120ms, because it's a bit tricky to get right without seeing further ahead if there are any walls, whereas with sd's you don't ever expect to collide.
 The entry to a wallhug still has to be done manually, and starting the script on different ticks can have very different results.
