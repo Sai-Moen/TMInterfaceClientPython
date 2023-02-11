@@ -10,8 +10,8 @@ USE_DECIMAL_NOTATION = False # set to True for decimal notation, False for milli
 
 FULLSTEER = 0x10000
 TICK_MS = 10
-SEEK = 40 * TICK_MS
-MAX_VEL_LOSS = 0.002 * SEEK
+DEFAULT_SEEK = 40 * TICK_MS
+MAX_VEL_LOSS = 0.002 # per ms
 
 TAG = "[Wallhugger] "
 def getServerName():
@@ -32,22 +32,21 @@ class Wallhugger(Client):
             "time_from": -1,
             "time_to": -1,
             "direction": 0,
+            "seek": DEFAULT_SEEK,
             "use_decimal": USE_DECIMAL_NOTATION
         }
         self.load_cfg()
+        self.max_vel_loss = MAX_VEL_LOSS * self.seek
 
         self.input_time = -1
         self.inputs = [None]
         self.state = WhState()
 
     def load_cfg(self):
-        """
-        Loads all fields from the config dict into instance variables
-        to avoid live variable tampering (mostly for GUI compatibility).
-        """
         self.time_from: int = self.cfg["time_from"]
         self.time_to: int = self.cfg["time_to"]
         self.direction: int = self.cfg["direction"]
+        self.seek: int = self.cfg["seek"]
         self.generateCmdTime = self.generateDecimal if self.cfg["use_decimal"] else self.generateMs
 
     def on_registered(self, iface: TMInterface):
@@ -55,23 +54,41 @@ class Wallhugger(Client):
         iface.execute_command("set controller none")
         iface.register_custom_command("wh")
         iface.log(TAG + "Use the wh command to set a time range and direction: time_from-time_to wh direction")
+        iface.register_custom_command("seek")
+        iface.log(TAG + "Use the seek command to set how far the tool should look ahead in amount of ticks.")
 
     def on_custom_command(self, iface: TMInterface, time_from: int, time_to: int, command: str, args: list):
+        msg = ("Invalid command", "error")
         if command == "wh":
             msg = self.on_wh(time_from, time_to, args)
-        else:
-            iface.log(TAG + "Invalid command", "error")
-            return
-        iface.log(*msg)
+        elif command == "seek":
+            msg = self.on_seek(args)
+        iface.log(TAG + msg[0], msg[1])
 
     def on_wh(self, time_from: int, time_to: int, args: list):
         if time_to == -1 or time_from == -1:
-            return TAG + "Timerange not set, Usage: time_from-time_to wh direction", "warning"
+            return "Timerange not set, Usage: time_from-time_to wh direction", "warning"
         elif len(args) == 1 and args[0] in ("left", "right"):
             self.cfg["direction"] = int(args[0] == "right") - int(args[0] == "left")
             self.cfg["time_from"], self.cfg["time_to"] = time_from, time_to
-            return TAG + "wh settings changed successfully!", "success"
-        return TAG + "Usage: time_from-time_to wh direction", "warning"
+            return "wh settings changed successfully!", "success"
+        return "Usage: time_from-time_to wh direction", "warning"
+
+    def on_seek(self, args: list):
+        if not args:
+            self.cfg["seek"] = DEFAULT_SEEK
+            self.max_vel_loss = MAX_VEL_LOSS * DEFAULT_SEEK
+            return f"seek value reset to {DEFAULT_SEEK}ms successfully", "success"
+        try:
+            new_seek = int(args[0])
+            if new_seek >= 1:
+                new_seek *= TICK_MS
+                self.cfg["seek"] = new_seek
+                self.max_vel_loss = new_seek * MAX_VEL_LOSS
+                return f"seek value changed to {new_seek}ms successfully!", "success"
+            return "seek value should be at least 1 tick", "warning"
+        except:
+            return "Not a parseable number!", "warning"
 
     def on_simulation_begin(self, iface: TMInterface):
         iface.remove_state_validation()
@@ -92,13 +109,13 @@ class Wallhugger(Client):
         self.inputs: list = [None]
         self.reset()
 
-        self.time_limit = self.time_to + SEEK + TICK_MS
+        self.time_limit = self.time_to + self.seek + TICK_MS
         iface.set_simulation_time_limit(self.time_limit - 10010) # temporary manual offset
 
     def on_simulation_step(self, iface: TMInterface, _time: int):
         if _time >= self.time_limit:
             return
-        elif _time == self.input_time + SEEK:
+        elif _time == self.input_time + self.seek:
             self.onCollisionCheck(iface)
             return
         elif _time == self.input_time:
@@ -148,7 +165,7 @@ class Wallhugger(Client):
             iface.rewind_to_state(self.step)
 
     def onCollisionCheck(self, iface: TMInterface):
-        self.state.update(iface, self.step)
+        self.state.update(iface, self.step, self.max_vel_loss)
         self.steer = self.getSteer()
         iface.rewind_to_state(self.step)
 
@@ -195,11 +212,11 @@ class WhState:
         self.speed = 0
         self.isCrashed = False
 
-    def update(self, iface: TMInterface, prev_state: SimStateData):
+    def update(self, iface: TMInterface, prev_state: SimStateData, max_vel_loss: float):
         self.data = iface.get_simulation_state()
         self.velocity = norm(self.data.velocity)
         self.speed = self.velocity * 3.6
-        isTooSlow = self.velocity < norm(prev_state.velocity) - MAX_VEL_LOSS
+        isTooSlow = self.velocity < norm(prev_state.velocity) - max_vel_loss
         hasCollided = self.data.scene_mobil.last_has_any_lateral_contact_time !=\
             prev_state.scene_mobil.last_has_any_lateral_contact_time
         self.isCrashed = isTooSlow or hasCollided
