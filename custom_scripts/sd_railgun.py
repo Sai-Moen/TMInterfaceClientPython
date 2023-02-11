@@ -1,6 +1,6 @@
 # sd_railgun; sd script by SaiMoen
 
-import numpy as np
+from numpy.linalg import norm
 from tminterface.client import Client, run_client
 from tminterface.interface import TMInterface
 from tminterface.structs import SimStateData
@@ -42,10 +42,6 @@ class Railgun(Client):
         self.algo = Steerer()
 
     def load_cfg(self):
-        """
-        Loads all fields from the config dict into instance variables,
-        mostly for GUI compatibility.
-        """
         self.time_from: int = self.cfg["time_from"]
         self.time_to: int = self.cfg["time_to"]
         self.direction: int = self.cfg["direction"]
@@ -62,7 +58,7 @@ class Railgun(Client):
         iface.log(TAG + "Setting it lower may slightly improve gains at high sd quality, but it's less stable.")
 
     def on_custom_command(self, iface: TMInterface, time_from: int, time_to: int, command: str, args: list):
-        msg = ("Bottom Text", "success")
+        msg = ("Invalid command", "error")
         if command == "sd":
             msg = self.on_sd(time_from, time_to, args)
         elif command == "seek":
@@ -86,7 +82,7 @@ class Railgun(Client):
             new_seek = int(args[0])
             if new_seek >= 1:
                 self.cfg["seek"] = new_seek * TICK_MS
-                return f"seek value changed to {new_seek} successfully!", "success"
+                return f"seek value changed to {new_seek * TICK_MS}ms successfully!", "success"
             return "seek value should be at least 1 tick", "warning"
         except:
             return "Not a parseable number", "warning"
@@ -117,19 +113,13 @@ class Railgun(Client):
         if _time >= self.time_limit:
             return
         if _time == self.input_time + self.seek:
-            self.state.update(iface)
-            self.algo.addData((self.state.sd_vel, self.steer))
-            iface.rewind_to_state(self.step)
+            self.onVelocityCheck(iface)
             return
         elif _time == self.input_time:
-            self.state.update(iface)
-            self.steer = self.algo.getSteer()
-            if not self.algo.running:
-                self.nextStep(iface)
+            if self.onInputTime(iface):
                 return
         elif _time == self.input_time - TICK_MS:
-            self.state.update(iface)
-            self.step = self.state.data
+            self.step = iface.get_simulation_state()
 
         if _time >= self.input_time:
             iface.set_input_state(sim_clear_buffer=False, steer=self.steer)
@@ -141,6 +131,18 @@ class Railgun(Client):
     def on_deregistered(self, *_):
         print(TAG + "Attempting to back up most recent inputs to sd_railgun.txt...")
         self.writeSteerToFile()
+
+    def onVelocityCheck(self, iface: TMInterface):
+        self.state.update(iface)
+        self.algo.addData((self.state.sd_vel, self.steer))
+        iface.rewind_to_state(self.step)
+
+    def onInputTime(self, iface: TMInterface):
+        self.state.update(iface)
+        self.steer = self.algo.getSteer()
+        if self.algo.isDone:
+            self.nextStep(iface)
+        return self.algo.isDone
 
     def nextStep(self, iface: TMInterface):
         """Re-do the current tick while countersteering or go to the next tick."""
@@ -200,16 +202,15 @@ class RgState:
     """Modified version of SimStateData that automatically calculates relevant values for this script."""
     def __init__(self):
         self.data = SimStateData()
-        self.speed = np.float64(0)
+        self.speed = 0
 
         self.not_all_wheels = False
-        self.local_vel = np.array([0.0, 0.0, 0.0])
-        self.sd_vel = np.float64(0)
+        self.local_vel = [0.0, 0.0, 0.0]
+        self.sd_vel = 0
 
     def update(self, iface: TMInterface):
-        """Run this at the start of every tick and you won't have to calculate anything in the main client."""
         self.data = iface.get_simulation_state()
-        self.speed = np.linalg.norm(self.data.velocity) * 3.6
+        self.speed = norm(self.data.velocity) * 3.6
 
         self.not_all_wheels = not all(
             [
@@ -219,7 +220,7 @@ class RgState:
         )
         self.local_vel = self.data.scene_mobil.current_local_speed
         self.local_vel[1] *= self.not_all_wheels
-        self.sd_vel = np.linalg.norm(self.local_vel)
+        self.sd_vel = norm(self.local_vel)
 
 class Steerer:
     """Steering algorithm implementation for finding sd steering values."""
@@ -228,13 +229,13 @@ class Steerer:
         self.srange = (0, 0)
         self.best = (0.0, 0)
         self.steerGen = None
-        self.running = False
+        self.isDone = False
 
     def setupNewTick(self, direction: int):
         self.data = [(0, HALF_STEER * direction)]
         self.setSteerRange(HALF_STEER) 
         self.steerGen = self.getSteerGen()
-        self.running = True
+        self.isDone = False
 
     def addData(self, data: tuple):
         self.data.append(data)
@@ -248,24 +249,24 @@ class Steerer:
         self.best = self.data[0]
         return self.best[1]
 
-    def getSteerGen(self): # this should really not exist, at some point just make a list with offsets
+    def getSteerGen(self): # Probably just rewriting this for new api
         mins, maxs = min(self.srange), max(self.srange)
-        running = (step := (maxs - mins) >> 3) >= 4
-        step = (offset := step * running) << 1
-        for s in range(mins + offset, maxs - offset + 1, step + (not running)):
+        done = (step := (maxs - mins) >> 3) < 4
+        step = (offset := step * (not done)) << 1
+        for s in range(mins + offset, maxs - offset + 1, step + done):
             if s != self.best[1] and abs(s) <= FULLSTEER:
                 yield s
         self.setSteerRange(step)
         self.data = [self.best]
-        self.running = running
+        self.isDone = done
 
     def getSteer(self):
         if (steer := next(self.steerGen, None)) != None:
             return steer
-        elif self.running:
+        elif not self.isDone:
             self.steerGen = self.getSteerGen()
-            return next(self.steerGen) # except if running flag fails
-        return 0 # doesn't matter what is returned, because generator is done running
+            return next(self.steerGen)
+        return 0
 
 if __name__ == "__main__":
     Railgun().main()
