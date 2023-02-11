@@ -81,8 +81,9 @@ class Railgun(Client):
         try:
             new_seek = int(args[0])
             if new_seek >= 1:
-                self.cfg["seek"] = new_seek * TICK_MS
-                return f"seek value changed to {new_seek * TICK_MS}ms successfully!", "success"
+                new_seek *= TICK_MS
+                self.cfg["seek"] = new_seek
+                return f"seek value changed to {new_seek}ms successfully!", "success"
             return "seek value should be at least 1 tick", "warning"
         except:
             return "Not a parseable number", "warning"
