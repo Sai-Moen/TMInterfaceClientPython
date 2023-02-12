@@ -143,7 +143,8 @@ class Railgun(Client):
         self.steer = self.algo.getSteer()
         if self.algo.isDone:
             self.nextStep(iface)
-        return self.algo.isDone
+            return True
+        return False
 
     def nextStep(self, iface: TMInterface):
         """Re-do the current tick while countersteering or go to the next tick."""
