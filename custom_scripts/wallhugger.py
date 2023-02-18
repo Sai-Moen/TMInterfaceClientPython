@@ -84,7 +84,7 @@ class Wallhugger(Client):
             if new_seek >= 1:
                 new_seek *= TICK_MS
                 self.cfg["seek"] = new_seek
-                self.max_vel_loss = new_seek * MAX_VEL_LOSS
+                self.max_vel_loss = MAX_VEL_LOSS * new_seek
                 return f"seek value changed to {new_seek}ms successfully!", "success"
             return "seek value should be at least 1 tick", "warning"
         except:
