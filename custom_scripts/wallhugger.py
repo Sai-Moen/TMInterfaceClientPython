@@ -10,7 +10,7 @@ USE_DECIMAL_NOTATION = False # set to True for decimal notation, False for milli
 
 FULLSTEER = 0x10000
 TICK_MS = 10
-DEFAULT_SEEK = 40 * TICK_MS
+DEFAULT_SEEK = 60 * TICK_MS
 MAX_VEL_LOSS = 0.002 # per ms
 
 TAG = "[Wallhugger] "
