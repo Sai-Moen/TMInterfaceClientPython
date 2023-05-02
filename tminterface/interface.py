@@ -2,6 +2,7 @@ import struct
 import threading
 import time
 import mmap
+from ctypes import windll, c_char_p
 from typing import Tuple
 
 from tminterface.client import Client
@@ -170,7 +171,7 @@ class TMInterface(object):
 
     def register(self, client: Client) -> bool:
         """
-        Registers a client on the server. 
+        Registers a client on the server.
         The server can only register one client at a time, if the client is already
         registered, the method will return False.
 
@@ -262,12 +263,12 @@ class TMInterface(object):
 
     def set_input_state(self, sim_clear_buffer: bool = True, **kwargs):
         """
-        Sets the game input state of the vehicle. 
+        Sets the game input state of the vehicle.
 
-        Sets individual input states for the car. If successfully applied, 
+        Sets individual input states for the car. If successfully applied,
         key states are guaranteed to be applied at next physics tick.
         If you want to apply an input state that happens at 500ms, call
-        send this message at 490ms (one step before). 
+        send this message at 490ms (one step before).
 
         Note that it is not guaranteed that the game will actually process the input
         in the RUN mode. This can happen when setting the game speed to high factors
@@ -278,7 +279,7 @@ class TMInterface(object):
         all other input events are cleared. If you want to preserve existing input state & events,
         pass sim_clear_buffer=False.
 
-        Arguments left, right, accelerate and brake are binary events. 
+        Arguments left, right, accelerate and brake are binary events.
         To disable an action pass False and to enable it, pass True.
 
         Arguments steer and gas are analog events. Pass a value in the range of [-65536, 65536] to modify
@@ -403,7 +404,7 @@ class TMInterface(object):
         """
         Adds an interface command to the internal command queue.
 
-        The command will not be immediately executed, rather, it may be executed when 
+        The command will not be immediately executed, rather, it may be executed when
         the current queue is processed on the next game frame.
 
         Args:
@@ -483,7 +484,7 @@ class TMInterface(object):
         cp_count = len([cp_time.time for cp_time in state.cp_data.cp_times if cp_time.time != -1])
         cp_target = len(state.cp_data.cp_times)
         self.client.on_checkpoint_count_changed(self, cp_count, cp_target)
-        
+
         # Send client the number of laps of the state rewinded to
         if (len(state.cp_data.cp_states) > 0):
             lap_count = cp_count // len(state.cp_data.cp_states)
@@ -719,7 +720,7 @@ class TMInterface(object):
 
         It is completely up to the command implementation to process the time range and additional
         arguments supplied in the on_custom_command hook. Quoted arguments such as filenames will
-        be automatically joined into one argument, even if they contain spaces. 
+        be automatically joined into one argument, even if they contain spaces.
 
         A console command is not immediately executed after submitting it to the console.
         TMInterface executes commands asynchronously, processing a fixed amount of commands
@@ -902,11 +903,29 @@ class TMInterface(object):
             self.client.on_custom_command(self, _from, to, command, args)
             self._respond_to_call(msgtype)
 
+    def _is_mapped_file_present(self):
+        FILE_MAP_ALL_ACCESS = 0xF001F
+        inherit_handle = 0
+        HANDLE_NAME = c_char_p(bytes(self.server_name.encode()))
+        h = windll.kernel32.OpenFileMappingA(FILE_MAP_ALL_ACCESS, inherit_handle, HANDLE_NAME)
+        is_opened = h != 0
+
+        if is_opened:
+            # close again to prevent handle leaks
+            windll.kernel32.CloseHandle(h)
+
+        return is_opened
+
     def _ensure_connected(self):
         if self.mfile is not None:
             return True
 
         try:
+            if not self._is_mapped_file_present():
+                print(f"No TMI instance with server name {self.server_name} found, waiting for TMI instance to open..")
+                while not self._is_mapped_file_present():
+                    time.sleep(1)
+
             self.mfile = mmap.mmap(-1, self.buffer_size, tagname=self.server_name)
             return True
         except Exception as e:
