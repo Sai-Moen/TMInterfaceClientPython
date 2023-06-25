@@ -1,7 +1,14 @@
 # TMInterface custom scripts by SaiMoen
 I will try to say 'python script' when referring to the scripts that interact with the API, and 'input script' when talking about the input scripts used by TMInterface.
 
-## sd_railgun:
+## Troubleshooting:
+Script doesn't seem to open or "...object doesn't have attribute..." ->
+This is a problem with the tminterface API version not matching what the script expects.
+Update your tminterface api using `pip install tminterface --upgrade` and:
+Make sure your installations of Python and pip are both on the PATH environment variable (python installer advanced option),
+Make sure you're running the script from those versions, as pip will install a package for the version on PATH.
+
+### sd_railgun:
 Deterministic, velocity-based procedural speedslide/speeddrift script
 
 #### Quick setup:
@@ -45,7 +52,7 @@ After we only changed by 1 unit, pick the best value and display it. (And save i
 ##### p.s.
 The reason I named it railgun is because visualizing the code running through the inputs made me think of how a railgun gradually propels its projectile (in this case the stadium car), though I might just have too much imagination.
 
-## Wallhugger
+### Wallhugger
 A script that loves full steering, except when there is a wall.
 
 #### Quick setup:
