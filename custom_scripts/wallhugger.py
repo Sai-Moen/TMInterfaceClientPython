@@ -1,11 +1,14 @@
 # wallhugger; wh script by SaiMoen
 
-from numpy.linalg import norm
 from tminterface.client import Client, run_client
 from tminterface.interface import TMInterface
 from tminterface.structs import SimStateData
 
+from numpy.linalg import norm
+
 USE_DECIMAL_NOTATION = False # set to True for decimal notation, False for milliseconds
+USE_INFO = True # set to True to get info (like speed), False to get easier to copy output (if writing file fails)
+
 # You shouldn't need to change anything except for the previous line (if you want decimal notation of course)
 
 FULLSTEER = 0x10000
@@ -157,8 +160,7 @@ class Wallhugger(Client):
         self.inputSteer(iface, self.steer)
         if self.isDone:
             self.inputs.append(self.steer)
-            speed = norm(self.step.velocity) * 3.6
-            print(f"{self.input_time} steer {self.steer} -> {speed} km/h")
+            self.printInfo(self.state.speed)
 
             self.reset()
             self.input_time += TICK_MS
@@ -168,6 +170,10 @@ class Wallhugger(Client):
         self.state.update(iface, self.step, self.max_vel_loss)
         self.steer = self.getSteer()
         iface.rewind_to_state(self.step)
+
+    def printInfo(self, speed):
+        info = USE_INFO * f" -> {speed} km/h"
+        print(f"{self.input_time} steer {self.steer}{info}")
 
     def writeSteerToFile(self):
         try:
