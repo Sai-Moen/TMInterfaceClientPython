@@ -1,11 +1,14 @@
 # sd_railgun; sd script by SaiMoen
 
-from numpy.linalg import norm
 from tminterface.client import Client, run_client
 from tminterface.interface import TMInterface
 from tminterface.structs import SimStateData
 
+from numpy.linalg import norm
+
 USE_DECIMAL_NOTATION = False # set to True for decimal notation, False for milliseconds
+USE_INFO = True # set to True to get info (like speed), False to get easier to copy output (if writing file fails)
+
 # You shouldn't need to change anything except for the previous line (if you want decimal notation of course)
 
 FULLSTEER = 0x10000
@@ -154,7 +157,7 @@ class Railgun(Client):
         else:
             iface.set_input_state(sim_clear_buffer=False, steer=best)
             self.inputs.append(best)
-            print(f"{self.input_time} steer {best} -> {self.state.speed} km/h")
+            self.printInfo(self.state.speed)
             if self.csteering:
                 self.changeDirection()
             self.input_time += TICK_MS
@@ -164,6 +167,10 @@ class Railgun(Client):
     def changeDirection(self):
         self.direction *= -1
         self.csteering ^= True
+
+    def printInfo(self, speed):
+        info = USE_INFO * f" -> {speed} km/h"
+        print(f"{self.input_time} steer {self.steer}{info}")
 
     def writeSteerToFile(self):
         try:
