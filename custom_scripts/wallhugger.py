@@ -160,7 +160,7 @@ class Wallhugger(Client):
         self.inputSteer(iface, self.steer)
         if self.isDone:
             self.inputs.append(self.steer)
-            self.printInfo(self.state.speed)
+            self.printInfo()
 
             self.reset()
             self.input_time += TICK_MS
@@ -171,8 +171,8 @@ class Wallhugger(Client):
         self.steer = self.getSteer()
         iface.rewind_to_state(self.step)
 
-    def printInfo(self, speed):
-        info = USE_INFO * f" -> {speed} km/h"
+    def printInfo(self):
+        info = USE_INFO * f" -> {self.state.speed} km/h"
         print(f"{self.input_time} steer {self.steer}{info}")
 
     def writeSteerToFile(self):
