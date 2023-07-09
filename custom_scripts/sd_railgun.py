@@ -157,7 +157,8 @@ class Railgun(Client):
         else:
             iface.set_input_state(sim_clear_buffer=False, steer=best)
             self.inputs.append(best)
-            self.printInfo(self.state.speed)
+            self.printInfo()
+            
             if self.csteering:
                 self.changeDirection()
             self.input_time += TICK_MS
@@ -168,8 +169,8 @@ class Railgun(Client):
         self.direction *= -1
         self.csteering ^= True
 
-    def printInfo(self, speed):
-        info = USE_INFO * f" -> {speed} km/h"
+    def printInfo(self):
+        info = USE_INFO * f" -> {self.state.speed} km/h"
         print(f"{self.input_time} steer {self.steer}{info}")
 
     def writeSteerToFile(self):
