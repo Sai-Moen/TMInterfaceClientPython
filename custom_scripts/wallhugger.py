@@ -117,7 +117,7 @@ class Wallhugger(Client):
 
     def on_simulation_step(self, iface: TMInterface, _time: int):
         time_min = self.input_time - TICK_MS
-        is_in_range = time_min >= _time < self.time_limit
+        is_in_range = time_min <= _time < self.time_limit
         if not is_in_range:
             return
         
