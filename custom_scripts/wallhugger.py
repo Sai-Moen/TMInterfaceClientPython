@@ -116,14 +116,17 @@ class Wallhugger(Client):
         iface.set_simulation_time_limit(self.time_limit - 10010) # temporary manual offset
 
     def on_simulation_step(self, iface: TMInterface, _time: int):
-        if _time >= self.time_limit:
+        time_min = self.input_time - TICK_MS
+        is_in_range = time_min >= _time < self.time_limit
+        if not is_in_range:
             return
+        
         elif _time == self.input_time + self.seek:
             self.onCollisionCheck(iface)
             return
         elif _time == self.input_time:
             self.onInputTime(iface)
-        elif _time == self.input_time - TICK_MS:
+        elif _time == time_min:
             self.step = iface.get_simulation_state()
 
         if _time > self.input_time:
