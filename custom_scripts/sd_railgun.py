@@ -114,15 +114,18 @@ class Railgun(Client):
         iface.set_simulation_time_limit(self.time_limit - 10010) # temporary manual offset
 
     def on_simulation_step(self, iface: TMInterface, _time: int):
-        if _time >= self.time_limit:
+        time_min = self.input_time - TICK_MS
+        is_in_range = time_min >= _time < self.time_limit
+        if not is_in_range:
             return
+        
         if _time == self.input_time + self.seek:
             self.onVelocityCheck(iface)
             return
         elif _time == self.input_time:
             if self.onInputTime(iface):
                 return
-        elif _time == self.input_time - TICK_MS:
+        elif _time == time_min:
             self.step = iface.get_simulation_state()
 
         if _time >= self.input_time:
@@ -157,7 +160,7 @@ class Railgun(Client):
         else:
             iface.set_input_state(sim_clear_buffer=False, steer=best)
             self.inputs.append(best)
-            self.printInfo()
+            self.printInfo(best)
             
             if self.csteering:
                 self.changeDirection()
@@ -169,9 +172,9 @@ class Railgun(Client):
         self.direction *= -1
         self.csteering ^= True
 
-    def printInfo(self):
+    def printInfo(self, best: int):
         info = USE_INFO * f" -> {self.state.speed} km/h"
-        print(f"{self.input_time} steer {self.steer}{info}")
+        print(f"{self.input_time} steer {best}{info}")
 
     def writeSteerToFile(self):
         try:
